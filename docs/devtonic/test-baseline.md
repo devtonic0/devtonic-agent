@@ -39,9 +39,36 @@ Measured on macOS 15.5 arm64, Python 3.14.6 (uv-managed), SQLite 3.53.4:
 | `tests/skills` | pass | 1567 | 0 | 0 | 1 | 14 |
 | `tests/cron` | pass | 1594 | 0 | 0 | 11 | 63 |
 
-Linux: not yet measured locally. Devtonic CI (`ubuntu-latest`) currently runs
-only the import smoke plus changed test files; the next roadmap item expands it
-and will fill in the Linux column.
+Linux, Devtonic CI `test` job (`ubuntu-latest` = Ubuntu 26.04 image
+20261101.186.1, x86_64, system CPython 3.14.4), run
+[42559722653](https://github.com/devtonic0/devtonic-agent/actions/runs/42559722653):
+
+| Target | Status | Passed | Failed | Errors | Skipped | Time (s) |
+|---|---|---|---|---|---|---|
+| `tests/devtonic` | pass | 8 | 0 | 0 | 0 | 1 |
+| `tests/hermes_platform` | pass | 121 | 0 | 0 | 6 | 2 |
+| `tests/conformance` | pass | 19 | 0 | 0 | 2 | 23 |
+| `tests/providers` | pass | 93 | 0 | 0 | 0 | 23 |
+| `tests/skills` | pass | 1567 | 0 | 0 | 1 | 12 |
+| `tests/cron` | pass | 1603 | 0 | 0 | 2 | 97 |
+
+Skip counts differ by host because some tests are gated with
+`@pytest.mark.platforms(...)` (e.g. 9 cron tests and 4 conformance tests that
+skip on macOS run on Linux). The whole Devtonic CI job takes about 3 minutes.
+
+## In CI
+
+The Devtonic CI `test` job runs the default set on every PR and on pushes to
+`main`:
+
+```bash
+uv run python scripts/devtonic/baseline.py --json baseline-linux.json --markdown "$GITHUB_STEP_SUMMARY"
+```
+
+The host line and results table show up on the run's summary page, and the JSON
+is uploaded as the `baseline-linux` artifact. `--markdown` appends to the target
+file, so it is safe to use with `$GITHUB_STEP_SUMMARY`. A failure in any default
+target fails the required `test` check.
 
 ## Opt-in targets
 
