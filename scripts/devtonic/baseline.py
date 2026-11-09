@@ -12,6 +12,7 @@ Usage::
     uv run python scripts/devtonic/baseline.py               # default fast targets
     uv run python scripts/devtonic/baseline.py tests/cron    # explicit targets
     uv run python scripts/devtonic/baseline.py --json out.json --timeout 900
+    uv run python scripts/devtonic/baseline.py --set large --rerun-failed
 
 The tests' own ``conftest.py`` sandboxes ``HERMES_HOME``, so running this
 never reads or writes a real Hermes install.
@@ -29,7 +30,7 @@ import subprocess
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +49,18 @@ DEFAULT_TARGETS = (
     "tests/cron",
 )
 
+# Large areas measured explicitly (``--set large``); each takes minutes on a
+# laptop and has known host-dependent failures, see docs/devtonic/test-baseline.md.
+LARGE_TARGETS = (
+    "tests/tui_gateway",
+    "tests/tools",
+    "tests/agent",
+    "tests/gateway",
+    "tests/hermes_cli",
+)
+
+TARGET_SETS = {"default": DEFAULT_TARGETS, "large": LARGE_TARGETS}
+
 _COUNT_RE = re.compile(r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|deselected)")
 # Short-summary lines only ("FAILED path.py::node - msg"); captured log records
 # also start with "ERROR" but are followed by spaces and a logger name.
@@ -62,11 +75,16 @@ class TargetResult:
     counts: dict[str, int]
     summary: str
     failures: list[str]
+    # Files that failed in the parallel run but passed when rerun alone
+    # (``--rerun-failed``): load/ordering-sensitive, not deterministic failures.
+    flaky: list[str] = field(default_factory=list)
 
     @property
     def status(self) -> str:
         if self.returncode == -1:
             return "timeout"
+        if self.returncode == 0 and self.flaky:
+            return "flaky"
         if self.returncode == 0:
             return "pass"
         if self.returncode == 5:
@@ -154,6 +172,39 @@ def run_isolated(target: str, timeout: int, extra: list[str], jobs: int) -> Targ
     return TargetResult(target, worst, time.monotonic() - start, counts, summary, failures)
 
 
+def failing_files(failures: list[str]) -> list[str]:
+    """Unique test files behind failure entries (node ids or ``file (summary)``)."""
+    files: list[str] = []
+    for entry in failures:
+        path = entry.split("::", 1)[0].split(" (", 1)[0]
+        if path not in files:
+            files.append(path)
+    return files
+
+
+def rerun_failed(result: TargetResult, timeout: int, extra: list[str]) -> TargetResult:
+    """Rerun each failing file alone, serially, and split flakes from real failures.
+
+    A file that fails under ``-j`` parallel load but passes on its own is
+    recorded in ``flaky`` and its failure entries are dropped. The target only
+    stays failing if some file fails again in isolation.
+    """
+    if result.returncode in (0, 5) or not result.failures:
+        return result
+    flaky: list[str] = []
+    still_failing: list[str] = []
+    rc = 0
+    for path in failing_files(result.failures):
+        again = run_target(path, timeout, extra)
+        if again.returncode in (0, 5):
+            flaky.append(path)
+            continue
+        if _exit_rank(again.returncode) > _exit_rank(rc):
+            rc = again.returncode
+        still_failing.extend(again.failures or [f"{path} ({again.summary or 'exit ' + str(again.returncode)})"])
+    return TargetResult(result.target, rc, result.seconds, result.counts, result.summary, still_failing, flaky)
+
+
 def render_table(results: list[TargetResult]) -> str:
     rows = ["| Target | Status | Passed | Failed | Errors | Skipped | Time (s) |", "|---|---|---|---|---|---|---|"]
     for r in results:
@@ -190,6 +241,10 @@ def render_markdown(results: list[TargetResult]) -> str:
     if failing:
         parts += ["", "Failures:", ""]
         parts += [f"- `{target}`: `{node}`" for target, node in failing]
+    flaky = [(r.target, path) for r in results for path in r.flaky]
+    if flaky:
+        parts += ["", "Flaky (failed under parallel load, passed alone):", ""]
+        parts += [f"- `{target}`: `{path}`" for target, path in flaky]
     return "\n".join(parts) + "\n"
 
 
@@ -203,6 +258,17 @@ def main(argv: list[str] | None = None) -> int:
         description="Run the devtonic-agent local test baseline (args after -- go to pytest)."
     )
     parser.add_argument("targets", nargs="*", help="test paths (default: fast baseline set)")
+    parser.add_argument(
+        "--set",
+        choices=sorted(TARGET_SETS),
+        default="default",
+        help="named target set used when no targets are given (default: default)",
+    )
+    parser.add_argument(
+        "--rerun-failed",
+        action="store_true",
+        help="rerun each failing file alone; files that then pass are reported as flaky",
+    )
     parser.add_argument("--timeout", type=int, default=900, help="timeout in seconds per pytest process")
     parser.add_argument("--json", type=Path, help="also write results as JSON to this path")
     parser.add_argument(
@@ -220,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    targets = args.targets or list(DEFAULT_TARGETS)
+    targets = args.targets or list(TARGET_SETS[args.set])
     results: list[TargetResult] = []
     for target in targets:
         if not (REPO_ROOT / target.split("::", 1)[0]).exists():
@@ -230,9 +296,13 @@ def main(argv: list[str] | None = None) -> int:
             res = run_target(target, args.timeout, extra)
         else:
             res = run_isolated(target, args.timeout, extra, args.jobs)
+        if args.rerun_failed:
+            res = rerun_failed(res, args.timeout, extra)
         print(f"{res.status:8} {res.seconds:7.1f}s {target} :: {res.summary}", flush=True)
         for node in res.failures:
             print(f"    {node}", flush=True)
+        for path in res.flaky:
+            print(f"    flaky: {path}", flush=True)
         results.append(res)
 
     print()
@@ -245,7 +315,7 @@ def main(argv: list[str] | None = None) -> int:
             fh.write(render_markdown(results))
     if not results:
         return 1
-    return 0 if all(r.status in ("pass", "no tests") for r in results) else 1
+    return 0 if all(r.status in ("pass", "flaky", "no tests") for r in results) else 1
 
 
 if __name__ == "__main__":
