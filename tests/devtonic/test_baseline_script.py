@@ -110,3 +110,56 @@ def test_render_markdown_includes_host_and_failures(baseline):
     assert "| `tests/a` | pass |" in text
     assert "- `tests/b`: `tests/b/test_x.py::t`" in text
     assert "Failures:" not in baseline.render_markdown([ok])
+
+
+def test_failing_files_dedupes_node_ids_and_summaries(baseline):
+    failures = [
+        "tests/x/test_a.py::test_one",
+        "tests/x/test_a.py::test_two",
+        "tests/x/test_b.py (exit 1)",
+        "tests/x/test_c.py",
+    ]
+    assert baseline.failing_files(failures) == ["tests/x/test_a.py", "tests/x/test_b.py", "tests/x/test_c.py"]
+
+
+def test_rerun_failed_separates_flakes_from_real_failures(baseline, monkeypatch):
+    first = baseline.TargetResult(
+        "tests/x", 1, 9.0, {"passed": 5, "failed": 2}, "", ["tests/x/test_a.py::t", "tests/x/test_b.py::t"]
+    )
+    reruns = {
+        "tests/x/test_a.py": baseline.TargetResult("tests/x/test_a.py", 0, 1.0, {"passed": 3}, "", []),
+        "tests/x/test_b.py": baseline.TargetResult(
+            "tests/x/test_b.py", 1, 1.0, {"failed": 1}, "", ["tests/x/test_b.py::t"]
+        ),
+    }
+    calls = []
+    monkeypatch.setattr(baseline, "run_target", lambda f, *_a: calls.append(f) or reruns[f])
+    res = baseline.rerun_failed(first, 10, [])
+    assert calls == ["tests/x/test_a.py", "tests/x/test_b.py"]
+    assert res.status == "fail"
+    assert res.flaky == ["tests/x/test_a.py"]
+    assert res.failures == ["tests/x/test_b.py::t"]
+    assert res.counts == first.counts
+
+    only_flaky = baseline.TargetResult("tests/x", 1, 9.0, {}, "", ["tests/x/test_a.py::t"])
+    res = baseline.rerun_failed(only_flaky, 10, [])
+    assert res.status == "flaky" and res.failures == []
+    assert "Flaky (failed under parallel load, passed alone):" in baseline.render_markdown([res])
+
+
+def test_rerun_failed_leaves_passing_results_alone(baseline, monkeypatch):
+    monkeypatch.setattr(baseline, "run_target", lambda *_a: pytest.fail("should not rerun"))
+    ok = baseline.TargetResult("tests/x", 0, 1.0, {"passed": 1}, "", [])
+    assert baseline.rerun_failed(ok, 10, []) is ok
+
+
+def test_large_set_is_selectable(baseline, monkeypatch):
+    seen = []
+
+    def fake_run(target, *_a):
+        seen.append(target)
+        return baseline.TargetResult(target, 0, 0.0, {}, "", [])
+
+    monkeypatch.setattr(baseline, "run_isolated", fake_run)
+    assert baseline.main(["--set", "large"]) == 0
+    assert seen == list(baseline.LARGE_TARGETS)

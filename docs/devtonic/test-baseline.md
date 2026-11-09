@@ -11,6 +11,7 @@ uv run python scripts/devtonic/baseline.py                 # default fast set (~
 uv run python scripts/devtonic/baseline.py tests/cron      # explicit targets
 uv run python scripts/devtonic/baseline.py --json out.json # machine-readable results
 uv run python scripts/devtonic/baseline.py tests/x -- -k foo   # args after -- go to pytest
+uv run python scripts/devtonic/baseline.py --set large --rerun-failed  # large areas, flakes split out (~45 min)
 ```
 
 - Each **test file** runs in its own `python -m pytest` subprocess (the same
@@ -93,9 +94,56 @@ extra again.
 None observed yet in the default set (two consecutive per-file runs were
 identical). Record flakes here with host, file and symptom as they show up.
 
+## Large areas (`--set large`)
+
+These five areas hold most of the upstream suite (about 6,000 test files).
+They are not in CI. Run them explicitly:
+
+```bash
+uv run python scripts/devtonic/baseline.py --set large --rerun-failed --json large.json
+```
+
+`--rerun-failed` reruns each failing file on its own, serially. Files that pass
+alone are reported as `flaky` (they failed only under `-j` parallel load), and
+the target only stays `fail` if a file fails again in isolation.
+
+Measured on macOS 15.5 arm64, Python 3.14.6, SQLite 3.53.4, 11 CPUs, `-j 8`,
+default `uv sync --group dev --group test` environment:
+
+| Target | Status | Passed | Failed | Errors | Skipped | Time (s) |
+|---|---|---|---|---|---|---|
+| `tests/tui_gateway` | fail | 3128 | 6 | 7 | 13 | 208 |
+| `tests/tools` | fail | 11040 | 25 | 1 | 353 | 367 |
+| `tests/agent` | fail | 12451 | 7 | 1 | 65 | 458 |
+| `tests/gateway` | fail | 12235 | 209 | 112 | 349 | 775 |
+| `tests/hermes_cli` | fail | 18799 | 132 | 6 | 685 | 852 |
+
+The whole set takes about 44 minutes. That is 57,653 passing tests, and about
+0.9% fail or error. Every failing file was rerun alone to classify it:
+
+| Cause | Where | Files |
+|---|---|---|
+| Optional deps missing from the `dev`+`test` groups: `aiohttp` (messaging extras), `acp`, `keyring`, `fal_client` | gateway (143 + ~11 that patch `aiohttp` attrs), tools 4, tui_gateway 7, agent 2, hermes_cli 3 | ~170 |
+| macOS `/var` → `/private/var` tmp symlink: paths compared unresolved | `tests/agent/test_compaction_prompt_rebuild.py` (3), `tests/tools/test_delegate.py` (1), `tests/gateway/test_session_client_env.py` | 3 |
+| Real-home I/O guard trips on host tools outside the sandbox (e.g. a `node` found in `~/.local/bin`) | `tests/tui_gateway/test_profiles_list_*` (6), 2 in `tests/hermes_cli` | 5 |
+| Linux-only tooling assumed: Xvnc/xfce desktop, GNU bash ≥ 4 (`PIPESTATUS` / `pipefail` exit codes under macOS bash 3.2), launchd vs systemd service paths | `tests/tools/test_bot_desktop_resources.py`, `tests/tools/test_terminal_pipeline_status.py` (4), gateway restart/launchd tests, hermes_cli service tests | ~10 |
+| No managed llama.cpp server discovered on macOS | `tests/agent/test_llamacpp_alias_managed_endpoint.py` (2) | 1 |
+| Session-group daemon start timeouts (`timed out after 30s waiting for groups.capabilities`) | `tests/gateway/test_session_group_peer_*` | 3 |
+| Other deterministic assertion failures (API authority, readiness, WhatsApp adapters, updater/desktop build stamps, the repo `.venv` warning) | gateway ~20, hermes_cli ~30, tools 2 | ~50 |
+
+Flaky under parallel load, passed when rerun alone:
+`tests/agent/test_cascading_interrupt.py`, `tests/agent/test_subdirectory_hints.py`,
+`tests/tools/test_patch_multimatch_locations.py`,
+`tests/tui_gateway/test_busy_compression_demotion.py`,
+`tests/hermes_cli/test_dashboard_session_token_file.py`,
+`tests/hermes_cli/test_gateway_launch_lifetime.py`,
+`tests/hermes_cli/test_kanban_worker_pid_fingerprint.py`,
+`tests/hermes_cli/test_source_build.py`.
+
+Most of the gateway failures come from the missing `aiohttp`. A run with the
+messaging extras installed should be the next measurement, and so should the
+Linux column for this set.
+
 ## Not yet measured
 
-`tests/agent`, `tests/tools`, `tests/gateway`, `tests/hermes_cli`,
-`tests/tui_gateway`, `tests/e2e`, `tests/integration`, `tests/pm`,
-`tests/plugins`. These are large; measure them one at a time with explicit
-`baseline.py` runs and add rows above.
+`tests/e2e`, `tests/integration`, `tests/pm`, `tests/plugins`.
