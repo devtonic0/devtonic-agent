@@ -153,6 +153,31 @@ def test_rerun_failed_leaves_passing_results_alone(baseline, monkeypatch):
     assert baseline.rerun_failed(ok, 10, []) is ok
 
 
+def test_merge_json_combines_result_files_without_running(baseline, tmp_path, monkeypatch, capsys):
+    def boom(*_a, **_k):
+        raise AssertionError("--merge-json must not run pytest")
+
+    monkeypatch.setattr(baseline, "run_isolated", boom)
+    monkeypatch.setattr(baseline, "run_target", boom)
+    a = baseline.TargetResult("tests/a", 0, 1.0, {"passed": 3}, "3 passed", [], ["tests/a/test_x.py"])
+    b = baseline.TargetResult("tests/b", 1, 2.0, {"passed": 1, "failed": 1}, "1 failed, 1 passed", ["tests/b/test_y.py::t"])
+    files = []
+    for name, res in (("a.json", a), ("b.json", b)):
+        path = tmp_path / name
+        path.write_text(json.dumps([dict(baseline.asdict(res), status=res.status)]))
+        files.append(str(path))
+    out = tmp_path / "merged.json"
+    md = tmp_path / "summary.md"
+
+    rc = baseline.main(["--merge-json", *files, "--json", str(out), "--markdown", str(md)])
+
+    assert rc == 1  # tests/b still fails
+    merged = json.loads(out.read_text())
+    assert [(r["target"], r["status"]) for r in merged] == [("tests/a", "flaky"), ("tests/b", "fail")]
+    assert "`tests/b`: `tests/b/test_y.py::t`" in md.read_text()
+    assert "| `tests/a` | flaky | 3 |" in capsys.readouterr().out
+
+
 def test_large_set_is_selectable(baseline, monkeypatch):
     seen = []
 

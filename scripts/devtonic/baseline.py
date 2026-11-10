@@ -248,6 +248,16 @@ def render_markdown(results: list[TargetResult]) -> str:
     return "\n".join(parts) + "\n"
 
 
+def load_results(paths: list[Path]) -> list[TargetResult]:
+    """Load results written by ``--json`` (one or more files, e.g. CI matrix artifacts)."""
+    results: list[TargetResult] = []
+    for path in paths:
+        for row in json.loads(path.read_text(encoding="utf-8")):
+            row = {k: v for k, v in row.items() if k != "status"}
+            results.append(TargetResult(**row))
+    return results
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     extra: list[str] = []
@@ -284,8 +294,34 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-j", "--jobs", type=int, default=min(8, os.cpu_count() or 2), help="parallel files per target"
     )
+    parser.add_argument(
+        "--merge-json",
+        type=Path,
+        nargs="+",
+        metavar="FILE",
+        help="run nothing; combine earlier --json results into one table (and --json/--markdown outputs)",
+    )
     args = parser.parse_args(argv)
 
+    if args.merge_json:
+        results = load_results(args.merge_json)
+    else:
+        results = run_targets(args, extra)
+
+    print()
+    print(render_table(results))
+    if args.json:
+        payload = [dict(asdict(r), status=r.status) for r in results]
+        args.json.write_text(json.dumps(payload, indent=2) + "\n")
+    if args.markdown:
+        with args.markdown.open("a", encoding="utf-8") as fh:
+            fh.write(render_markdown(results))
+    if not results:
+        return 1
+    return 0 if all(r.status in ("pass", "flaky", "no tests") for r in results) else 1
+
+
+def run_targets(args: argparse.Namespace, extra: list[str]) -> list[TargetResult]:
     targets = args.targets or list(TARGET_SETS[args.set])
     results: list[TargetResult] = []
     for target in targets:
@@ -304,18 +340,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in res.flaky:
             print(f"    flaky: {path}", flush=True)
         results.append(res)
-
-    print()
-    print(render_table(results))
-    if args.json:
-        payload = [dict(asdict(r), status=r.status) for r in results]
-        args.json.write_text(json.dumps(payload, indent=2) + "\n")
-    if args.markdown:
-        with args.markdown.open("a", encoding="utf-8") as fh:
-            fh.write(render_markdown(results))
-    if not results:
-        return 1
-    return 0 if all(r.status in ("pass", "flaky", "no tests") for r in results) else 1
+    return results
 
 
 if __name__ == "__main__":

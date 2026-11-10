@@ -1,0 +1,52 @@
+name: Devtonic large baseline
+# Measures the large test areas (`baseline.py --set large`) on Linux with the
+# messaging extras installed. Not a required check: it is slow (one job per
+# area) and has known host-dependent failures, see docs/devtonic/test-baseline.md.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/devtonic-large.yml
+jobs:
+  area:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [tui_gateway, tools, agent, gateway, hermes_cli]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (dev + test groups, messaging extra)
+        run: uv sync --frozen --group dev --group test --extra messaging
+      - name: Baseline tests/${{ matrix.target }}
+        # The table is the deliverable; failures are recorded, not gating.
+        continue-on-error: true
+        run: >-
+          uv run --no-sync python scripts/devtonic/baseline.py tests/${{ matrix.target }}
+          --rerun-failed --timeout 1800
+          --json large-${{ matrix.target }}.json --markdown "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: large-${{ matrix.target }}
+          path: large-${{ matrix.target }}.json
+          if-no-files-found: ignore
+  summary:
+    needs: area
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: large-*
+          merge-multiple: true
+      - name: Combined table
+        run: python3 scripts/devtonic/baseline.py --merge-json large-*.json --json large-linux.json --markdown "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: large-linux
+          path: large-linux.json
+          if-no-files-found: ignore
