@@ -10,7 +10,7 @@ on:
 jobs:
   area:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -22,10 +22,12 @@ jobs:
         run: uv sync --frozen --group dev --group test --extra messaging
       - name: Baseline tests/${{ matrix.target }}
         # The table is the deliverable; failures are recorded, not gating.
+        # --timeout is per test file: a file that hangs (e.g. gateway daemon
+        # waits) is recorded as a timeout instead of eating the job budget.
         continue-on-error: true
         run: >-
           uv run --no-sync python scripts/devtonic/baseline.py tests/${{ matrix.target }}
-          --rerun-failed --timeout 1800
+          --rerun-failed --timeout 300
           --json large-${{ matrix.target }}.json --markdown "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
