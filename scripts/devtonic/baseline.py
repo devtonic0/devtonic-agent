@@ -234,9 +234,13 @@ def host_line() -> str:
     )
 
 
-def render_markdown(results: list[TargetResult]) -> str:
-    """Host line, results table, and failing node ids, ready for a doc or CI summary."""
-    parts = [f"Measured on {host_line()}:", "", render_table(results)]
+def render_markdown(results: list[TargetResult], header: str | None = None) -> str:
+    """Host line, results table, and failing node ids, ready for a doc or CI summary.
+
+    ``header`` replaces the host line; ``--merge-json`` uses it because the
+    merging machine is not the one that ran the tests.
+    """
+    parts = [header or f"Measured on {host_line()}:", "", render_table(results)]
     failing = [(r.target, node) for r in results for node in r.failures]
     if failing:
         parts += ["", "Failures:", ""]
@@ -246,6 +250,16 @@ def render_markdown(results: list[TargetResult]) -> str:
         parts += ["", "Flaky (failed under parallel load, passed alone):", ""]
         parts += [f"- `{target}`: `{path}`" for target, path in flaky]
     return "\n".join(parts) + "\n"
+
+
+def load_results(paths: list[Path]) -> list[TargetResult]:
+    """Load results written by ``--json`` (one or more files, e.g. CI matrix artifacts)."""
+    results: list[TargetResult] = []
+    for path in paths:
+        for row in json.loads(path.read_text(encoding="utf-8")):
+            row = {k: v for k, v in row.items() if k != "status"}
+            results.append(TargetResult(**row))
+    return results
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -284,8 +298,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "-j", "--jobs", type=int, default=min(8, os.cpu_count() or 2), help="parallel files per target"
     )
+    parser.add_argument(
+        "--merge-json",
+        type=Path,
+        nargs="+",
+        metavar="FILE",
+        help="run nothing; combine earlier --json results into one table (and --json/--markdown outputs)",
+    )
     args = parser.parse_args(argv)
 
+    header = None
+    if args.merge_json:
+        results = load_results(args.merge_json)
+        header = f"Combined from {len(args.merge_json)} result file(s) (host: see each source run):"
+    else:
+        results = run_targets(args, extra)
+
+    print()
+    print(render_table(results))
+    if args.json:
+        payload = [dict(asdict(r), status=r.status) for r in results]
+        args.json.write_text(json.dumps(payload, indent=2) + "\n")
+    if args.markdown:
+        with args.markdown.open("a", encoding="utf-8") as fh:
+            fh.write(render_markdown(results, header))
+    if not results:
+        return 1
+    return 0 if all(r.status in ("pass", "flaky", "no tests") for r in results) else 1
+
+
+def run_targets(args: argparse.Namespace, extra: list[str]) -> list[TargetResult]:
     targets = args.targets or list(TARGET_SETS[args.set])
     results: list[TargetResult] = []
     for target in targets:
@@ -304,18 +346,7 @@ def main(argv: list[str] | None = None) -> int:
         for path in res.flaky:
             print(f"    flaky: {path}", flush=True)
         results.append(res)
-
-    print()
-    print(render_table(results))
-    if args.json:
-        payload = [dict(asdict(r), status=r.status) for r in results]
-        args.json.write_text(json.dumps(payload, indent=2) + "\n")
-    if args.markdown:
-        with args.markdown.open("a", encoding="utf-8") as fh:
-            fh.write(render_markdown(results))
-    if not results:
-        return 1
-    return 0 if all(r.status in ("pass", "flaky", "no tests") for r in results) else 1
+    return results
 
 
 if __name__ == "__main__":

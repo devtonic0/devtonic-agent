@@ -140,9 +140,53 @@ Flaky under parallel load, passed when rerun alone:
 `tests/hermes_cli/test_kanban_worker_pid_fingerprint.py`,
 `tests/hermes_cli/test_source_build.py`.
 
-Most of the gateway failures come from the missing `aiohttp`. A run with the
-messaging extras installed should be the next measurement, and so should the
-Linux column for this set.
+Most of the macOS gateway failures come from the missing `aiohttp`.
+
+### Linux column (messaging extras installed)
+
+`.github/workflows/devtonic-large.yml` runs the same set on `ubuntu-latest`,
+one job per area, with `uv sync --group dev --group test --extra messaging`,
+`--rerun-failed --timeout 300` (per file). It runs on `workflow_dispatch` and on
+PRs that touch the workflow file, and is not a required check. The `summary` job merges the per-area JSON with
+`baseline.py --merge-json` into a `large-linux` artifact.
+
+Measured on `ubuntu-latest` (4 CPUs), run 42961698151:
+
+| Target | Status | Passed | Failed | Errors | Skipped | Time (s) |
+|---|---|---|---|---|---|---|
+| `tests/tui_gateway` | pass | 3176 | 0 | 0 | 1 | 542 |
+| `tests/tools` | fail | 11271 | 5 | 1 | 181 | 688 |
+| `tests/agent` | fail | 12472 | 2 | 1 | 49 | 776 |
+| `tests/gateway` | timeout | 13654 | 13 | 0 | 81 | 2472 |
+| `tests/hermes_cli` | fail | 19076 | 95 | 54 | 429 | 1436 |
+
+59,649 passing tests. With `aiohttp` installed, gateway drops from 321
+failures/errors (macOS, no extras) to 13 plus two files that hang past the
+300 s per-file cap (`test_legacy_desktop_source.py`,
+`test_route_transition_racing_turn.py`). `tui_gateway` is fully green on
+Linux, so its macOS failures are host-specific (real-home guard, `acp`).
+Flaky under parallel load: `tests/gateway/test_session_tui_ops.py`.
+
+Remaining Linux failures by file (not yet triaged):
+
+- `tests/hermes_cli`: concentrated in the updater and source-build suites
+  (`test_update_target_identity.py` 31, `test_update_finish.py` 16,
+  `test_source_build.py` 13, `test_update_autostash.py` 8,
+  `test_update_recovery_closure.py` 8, `test_doctor_pm_store_probe.py` 8,
+  `test_tui_npm_install.py` 7, `test_web_ui_build.py` 6,
+  `test_commit_build_cli.py` 6, plus ~20 files with 1–4 each). Likely
+  environment-sensitive (CI checkout, git identity, npm/node), unverified.
+- `tests/tools`: `test_search_zero_match_and_multipath.py` (4),
+  `test_search_auto_multiline.py` (1), `test_fal_sdk.py` (collection error,
+  `fal_client` not installed).
+- `tests/agent`: `test_conversation_compression_manual.py[acp]`,
+  `test_runtime_self_protection.py::test_find_delete_over_own_venv_is_detected`,
+  `test_vault_key_storage.py` (collection error).
+- `tests/gateway`: `test_session_client_env.py` (2), `test_session_edit_policy.py` (2),
+  `test_session_policy_refusal_fields.py` (2), and one each in
+  `test_claim_reopen_off_loop.py`, `test_kanban_multiplex_served_profile_parity.py`,
+  `test_model_confirmation_clients.py`, `test_session_mutation_model.py`,
+  `test_update_streaming.py`, `test_watch_notification_reset_pin.py`.
 
 ## Not yet measured
 
