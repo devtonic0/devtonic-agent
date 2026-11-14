@@ -6,7 +6,8 @@ The autonomous improvement loop works these items top-down. When an item lands, 
 - [x] Get a fast, reliable local test baseline: document which `scripts/run_tests.sh` targets pass on macOS and Linux, and record known-flaky tests in `docs/devtonic/test-baseline.md` (first slice: per-file baseline runner + macOS results, [#1](https://github.com/devtonic0/devtonic-agent/pull/1))
   - [x] Record the Linux column (run `scripts/devtonic/baseline.py` on `ubuntu-latest` / a Linux box) ([#2](https://github.com/devtonic0/devtonic-agent/pull/2), docs [#3](https://github.com/devtonic0/devtonic-agent/pull/3))
   - [x] Measure the large areas (`tests/agent`, `tests/tools`, `tests/gateway`, `tests/hermes_cli`, `tests/tui_gateway`) and add them to the baseline doc (macOS, `--set large --rerun-failed`, [#5](https://github.com/devtonic0/devtonic-agent/pull/5))
-  - [ ] Re-measure the large set with the messaging extras (`aiohttp`) installed, and record the Linux column
+  - [x] Re-measure the large set with the messaging extras (`aiohttp`) installed, and record the Linux column (Linux, `devtonic-large.yml`, [#6](https://github.com/devtonic0/devtonic-agent/pull/6))
+  - [ ] Triage the Linux large-set failures (`tests/hermes_cli` updater/source-build suites ~150, gateway 13 + 2 per-file timeouts, tools/agent collection errors)
   - [ ] Fix or mark the macOS-only failures in the large set (`/private/var` path compares, bash 3.2 pipeline status, real-home guard on host tools)
   - [ ] Triage the `tests/hermes_state` `messages_fts` malformed-schema failures on macOS / SQLite 3.53
 - [ ] Expand Devtonic CI coverage step by step (core agent loop, tools, cron, cli) while keeping it under 15 minutes on `ubuntu-latest` (default baseline set already runs in CI, ~3 min, [#2](https://github.com/devtonic0/devtonic-agent/pull/2))
