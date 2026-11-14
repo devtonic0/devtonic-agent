@@ -234,9 +234,13 @@ def host_line() -> str:
     )
 
 
-def render_markdown(results: list[TargetResult]) -> str:
-    """Host line, results table, and failing node ids, ready for a doc or CI summary."""
-    parts = [f"Measured on {host_line()}:", "", render_table(results)]
+def render_markdown(results: list[TargetResult], header: str | None = None) -> str:
+    """Host line, results table, and failing node ids, ready for a doc or CI summary.
+
+    ``header`` replaces the host line; ``--merge-json`` uses it because the
+    merging machine is not the one that ran the tests.
+    """
+    parts = [header or f"Measured on {host_line()}:", "", render_table(results)]
     failing = [(r.target, node) for r in results for node in r.failures]
     if failing:
         parts += ["", "Failures:", ""]
@@ -303,8 +307,10 @@ def main(argv: list[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    header = None
     if args.merge_json:
         results = load_results(args.merge_json)
+        header = f"Combined from {len(args.merge_json)} result file(s) (host: see each source run):"
     else:
         results = run_targets(args, extra)
 
@@ -315,7 +321,7 @@ def main(argv: list[str] | None = None) -> int:
         args.json.write_text(json.dumps(payload, indent=2) + "\n")
     if args.markdown:
         with args.markdown.open("a", encoding="utf-8") as fh:
-            fh.write(render_markdown(results))
+            fh.write(render_markdown(results, header))
     if not results:
         return 1
     return 0 if all(r.status in ("pass", "flaky", "no tests") for r in results) else 1

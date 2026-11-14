@@ -175,6 +175,9 @@ def test_merge_json_combines_result_files_without_running(baseline, tmp_path, mo
     merged = json.loads(out.read_text())
     assert [(r["target"], r["status"]) for r in merged] == [("tests/a", "flaky"), ("tests/b", "fail")]
     assert "`tests/b`: `tests/b/test_y.py::t`" in md.read_text()
+    # The merging host did not run the tests, so its host line must not label the table.
+    assert "Measured on" not in md.read_text()
+    assert md.read_text().startswith("Combined from 2 result file(s)")
     assert "| `tests/a` | flaky | 3 |" in capsys.readouterr().out
 
 
