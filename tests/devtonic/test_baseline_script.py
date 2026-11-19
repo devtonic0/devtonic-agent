@@ -191,3 +191,34 @@ def test_large_set_is_selectable(baseline, monkeypatch):
     monkeypatch.setattr(baseline, "run_isolated", fake_run)
     assert baseline.main(["--set", "large"]) == 0
     assert seen == list(baseline.LARGE_TARGETS)
+
+
+def test_pytest_env_keeps_cacheprovider_flag_out_of_argv(baseline):
+    env = baseline.pytest_env({"PYTEST_ADDOPTS": "-x"})
+    assert env["PYTEST_ADDOPTS"].split() == ["-x", "-p", "no:cacheprovider"]
+    assert env["TZ"] == "UTC" and env["PYTHONHASHSEED"] == "0"
+    # Idempotent: a caller that already disables the cache is left alone.
+    assert baseline.pytest_env(env)["PYTEST_ADDOPTS"] == env["PYTEST_ADDOPTS"]
+
+
+def test_child_pytest_argv_has_no_extra_plugin_flags(baseline, tmp_path, monkeypatch):
+    """The child's sys.argv is what tests like test_relaunch compare against."""
+    probe = tmp_path / "test_probe.py"
+    probe.write_text(
+        "import sys\n"
+        "def test_argv():\n"
+        "    assert '-p' not in sys.argv[1:], sys.argv\n"
+        "    assert 'no:cacheprovider' not in sys.argv, sys.argv\n"
+    )
+    monkeypatch.setattr(baseline, "REPO_ROOT", tmp_path)
+    res = baseline.run_target(str(probe), timeout=120, extra=[])
+    assert res.status == "pass", res.summary
+    assert not (tmp_path / ".pytest_cache").exists()
+
+
+def test_checkout_venv_warning(baseline):
+    root = baseline.REPO_ROOT
+    assert baseline.checkout_venv_warning(str(root / ".venv"), "/usr") is not None
+    assert baseline.checkout_venv_warning(str(root / "venv"), "/usr") is not None
+    assert baseline.checkout_venv_warning("/opt/elsewhere/.venv", "/usr") is None
+    assert baseline.checkout_venv_warning("/usr", "/usr") is None

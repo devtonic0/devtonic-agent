@@ -108,9 +108,47 @@ def parse_summary(output: str) -> tuple[dict[str, int], str, list[str]]:
     return counts, summary, failures
 
 
+def pytest_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for one pytest subprocess.
+
+    ``-p no:cacheprovider`` goes through ``PYTEST_ADDOPTS`` rather than argv:
+    some tests compare ``sys.argv`` of the pytest process (e.g. the relaunch
+    argv in ``tests/hermes_cli/test_relaunch.py``), and extra argv entries
+    show up there as false failures.
+    """
+    env = dict(os.environ if base is None else base, TZ="UTC", PYTHONHASHSEED="0")
+    addopts = env.get("PYTEST_ADDOPTS", "").split()
+    if "no:cacheprovider" not in addopts:
+        addopts += ["-p", "no:cacheprovider"]
+    env["PYTEST_ADDOPTS"] = " ".join(addopts)
+    return env
+
+
+def checkout_venv_warning(prefix: str | None = None, base_prefix: str | None = None) -> str | None:
+    """A warning when the interpreter is a venv inside this checkout (e.g. ``./.venv``).
+
+    The updater suites treat a checkout-local ``venv``/``.venv`` as "this
+    install's own interpreter" (``hermes_cli/update_owning_install.py``), so
+    ``hermes update`` tests that build a temporary checkout retarget to the
+    repo instead and fail. Set ``UV_PROJECT_ENVIRONMENT`` to a path outside the
+    checkout for the large set.
+    """
+    prefix = sys.prefix if prefix is None else prefix
+    base_prefix = sys.base_prefix if base_prefix is None else base_prefix
+    if prefix == base_prefix:
+        return None
+    venv = Path(prefix).resolve()
+    if venv.name not in ("venv", ".venv") or venv.parent != REPO_ROOT:
+        return None
+    return (
+        f"note: running on the checkout venv {venv}; the hermes update suites in tests/hermes_cli "
+        "fail under it. Use UV_PROJECT_ENVIRONMENT=<path outside the checkout> for --set large."
+    )
+
+
 def run_target(target: str, timeout: int, extra: list[str]) -> TargetResult:
-    cmd = [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-rfE", target, *extra]
-    env = dict(os.environ, TZ="UTC", PYTHONHASHSEED="0")
+    cmd = [sys.executable, "-m", "pytest", "-q", "-rfE", target, *extra]
+    env = pytest_env()
     start = time.monotonic()
     try:
         proc = subprocess.run(
@@ -329,6 +367,8 @@ def main(argv: list[str] | None = None) -> int:
 
 def run_targets(args: argparse.Namespace, extra: list[str]) -> list[TargetResult]:
     targets = args.targets or list(TARGET_SETS[args.set])
+    if warning := checkout_venv_warning():
+        print(warning, file=sys.stderr)
     results: list[TargetResult] = []
     for target in targets:
         if not (REPO_ROOT / target.split("::", 1)[0]).exists():

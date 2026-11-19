@@ -19,12 +19,19 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: Install (dev + test groups, messaging extra)
+        # The env lives outside the checkout: the updater suites treat a
+        # checkout-local .venv as the install's own interpreter and retarget
+        # `hermes update` to it (hermes_cli/update_owning_install.py).
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/devtonic-env
         run: uv sync --frozen --group dev --group test --extra messaging
       - name: Baseline tests/${{ matrix.target }}
         # The table is the deliverable; failures are recorded, not gating.
         # --timeout is per test file: a file that hangs (e.g. gateway daemon
         # waits) is recorded as a timeout instead of eating the job budget.
         continue-on-error: true
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/devtonic-env
         run: >-
           uv run --no-sync python scripts/devtonic/baseline.py tests/${{ matrix.target }}
           --rerun-failed --timeout 300
