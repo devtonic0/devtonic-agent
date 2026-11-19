@@ -1,0 +1,68 @@
+name: Devtonic Linux triage
+# Reruns only the files that failed in an earlier "Devtonic large baseline"
+# run (its `large-linux` artifact), one file at a time, and records each
+# failure's short-summary reason. Minutes instead of the ~55 min full set.
+#
+# The environment mirrors upstream's own test job (.github/workflows/tests.yml):
+# PM-pinned Python (a SQLite without the WAL-reset bug), the same extras
+# (incl. acp, fal, keychain), pnpm/Node and ripgrep on PATH; baseline.py strips
+# the env to run_tests.sh's allowlist, so setup-pm's HERMES_HOME export does not
+# reach the tests. A failure that survives here is not explained by a thinner
+# dev environment.
+# Not a required check; see docs/devtonic/test-baseline.md.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Devtonic large baseline run id whose large-linux artifact to triage"
+        required: true
+  pull_request:
+    paths:
+      - .github/workflows/devtonic-triage.yml
+permissions:
+  contents: read
+  actions: read
+env:
+  # Large run measured after the harness fix (#7); PR runs triage this one.
+  DEFAULT_RUN_ID: "44458042669"
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install ripgrep (prebuilt binary, as in tests.yml)
+        run: |
+          set -euo pipefail
+          RG_VERSION=15.1.0
+          RG_SHA256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+          RG_TARBALL=ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz
+          curl -sSfL --retry 3 --retry-delay 5 -o "$RG_TARBALL" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+          echo "${RG_SHA256}  ${RG_TARBALL}" | sha256sum -c -
+          tar -xzf "$RG_TARBALL"
+          sudo mv "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
+          rm -rf "$RG_TARBALL" "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
+      - name: Set up locked Python and test dependencies (as in tests.yml)
+        uses: ./.github/actions/setup-pm
+        with:
+          packages: pnpm
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+      - name: Fetch the large-set results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id || env.DEFAULT_RUN_ID }}
+        run: gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n large-linux -D "$RUNNER_TEMP/large"
+      - name: Rerun the failing files
+        continue-on-error: true
+        run: >-
+          "$HERMES_PYTHON" scripts/devtonic/baseline.py
+          --failing-from "$RUNNER_TEMP/large/large-linux.json" --timeout 300
+          --json triage-linux.json --markdown "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: triage-linux
+          path: triage-linux.json
+          if-no-files-found: ignore
