@@ -8,6 +8,9 @@ The autonomous improvement loop works these items top-down. When an item lands, 
   - [x] Measure the large areas (`tests/agent`, `tests/tools`, `tests/gateway`, `tests/hermes_cli`, `tests/tui_gateway`) and add them to the baseline doc (macOS, `--set large --rerun-failed`, [#5](https://github.com/devtonic0/devtonic-agent/pull/5))
   - [x] Re-measure the large set with the messaging extras (`aiohttp`) installed, and record the Linux column (Linux, `devtonic-large.yml`, [#6](https://github.com/devtonic0/devtonic-agent/pull/6))
   - [ ] Triage the Linux large-set failures (`tests/hermes_cli` updater/source-build suites ~150, gateway 13 + 2 per-file timeouts, tools/agent collection errors)
+    - [x] Find and fix harness artifacts: checkout-local `.venv` retargets `hermes update` tests, `-p no:cacheprovider` in argv breaks `test_relaunch` (PR_LINK)
+    - [ ] Re-measure the Linux large set with the fix and update the Linux table
+    - [ ] Triage what remains: `test_update_autostash` / `test_update_fleet_restart_pending` bare-`.git` damage check, the not-yet-rerun updater files, gateway 13 + 2 timeouts
   - [ ] Fix or mark the macOS-only failures in the large set (`/private/var` path compares, bash 3.2 pipeline status, real-home guard on host tools)
   - [ ] Triage the `tests/hermes_state` `messages_fts` malformed-schema failures on macOS / SQLite 3.53
 - [ ] Expand Devtonic CI coverage step by step (core agent loop, tools, cron, cli) while keeping it under 15 minutes on `ubuntu-latest` (default baseline set already runs in CI, ~3 min, [#2](https://github.com/devtonic0/devtonic-agent/pull/2))

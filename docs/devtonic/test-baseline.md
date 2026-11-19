@@ -14,6 +14,11 @@ uv run python scripts/devtonic/baseline.py tests/x -- -k foo   # args after -- g
 uv run python scripts/devtonic/baseline.py --set large --rerun-failed  # large areas, flakes split out (~45 min)
 ```
 
+For `--set large`, put the env outside the checkout
+(`UV_PROJECT_ENVIRONMENT=/some/other/path uv sync ...` and the same variable on
+`uv run`): the `hermes update` suites misbehave under a checkout-local `.venv`
+(see the triage section below).
+
 - Each **test file** runs in its own `python -m pytest` subprocess (the same
   isolation unit as upstream's `scripts/run_tests.sh` /
   `scripts/run_tests_parallel.py`), up to `-j` files in parallel. Running a whole
@@ -167,7 +172,53 @@ failures/errors (macOS, no extras) to 13 plus two files that hang past the
 Linux, so its macOS failures are host-specific (real-home guard, `acp`).
 Flaky under parallel load: `tests/gateway/test_session_tui_ops.py`.
 
-Remaining Linux failures by file (not yet triaged):
+#### Triage of the Linux failures
+
+Two harness artifacts, not product bugs, explain most of the `tests/hermes_cli`
+failures and two of the `tests/tools`/`tests/agent` ones. Both are fixed in
+`baseline.py` / `devtonic-large.yml`:
+
+1. **Checkout-local venv.** `uv sync` puts the env at `./.venv`.
+   `hermes_cli/update_owning_install.py` treats a `venv`/`.venv` directly under a
+   checkout as that install's own interpreter, so every `hermes update` test that
+   builds a temporary checkout re-runs itself against the repo instead (or trips
+   the tests' audit hook on the retarget `subprocess.call`). Fix: the large
+   workflow sets `UV_PROJECT_ENVIRONMENT=${{ runner.temp }}/devtonic-env`, and
+   `baseline.py` prints a note when it runs on a checkout venv.
+2. **Extra pytest argv.** `baseline.py` passed `-p no:cacheprovider` on the
+   command line; `test_relaunch.py::test_calls_execvp` compares the pytest
+   process's `sys.argv`. Fix: the flag goes through `PYTEST_ADDOPTS`.
+
+Rerunning every failing non-gateway file from run 42961698151 on macOS with both
+fixes (env at a path outside the checkout):
+
+| Now passing | Still failing |
+|---|---|
+| `test_commit_build_cli.py`, `test_desktop_build_reuse.py`, `test_desktop_source_build.py`, `test_doctor_pm_store_probe.py`, `test_doctor_structural_corruption.py`, `test_kanban_boards.py`, `test_kanban_core_functionality.py`, `test_kanban_worker_*`, `test_relaunch.py`, `test_source_build.py`, `test_source_release_channels.py`, `test_update_channel.py`, `test_update_finish.py`, `test_update_head_moved_gate.py`, `test_update_parked_branch_guard.py`, `test_update_post_commit_safety.py`; tools `test_search_*` (2); agent `test_runtime_self_protection.py` | see below |
+
+Still failing after the fix (real, or not yet explained):
+
+- Missing optional deps, expected: `tests/agent/test_vault_key_storage.py`,
+  `tests/hermes_cli/test_vault_key_cli.py` (`keyring`), `tests/tools/test_fal_sdk.py`
+  (`fal_client`), `test_conversation_compression_manual.py[acp]` (`acp`).
+- `test_update_autostash.py` (8) and `test_update_fleet_restart_pending.py` (7):
+  the updater sees the test's bare `tmp_path/.git` dir as a damaged checkout
+  ("git no longer recognizes ... .git") before the mocked fetch. Reproduces on
+  macOS (Apple git 2.39); Linux status pending the next large run.
+- One each: `test_kanban_db.py::test_infrastructure_spawn_refusal_never_charges_the_card`,
+  `test_session_recovery_lost_and_found.py::test_unreadable_schema_without_cli_names_the_sqlite3_requirement`
+  (host `sqlite3` CLI), `test_tui_npm_install.py::test_runtime_node_comes_from_pm_without_legacy_repair`
+  (real-home guard on `bin/node`).
+- Not rerun in this pass (time budget): `test_update_recovery_closure.py`,
+  `test_update_target_identity.py`, `test_update_venv_holder_retirement.py`,
+  `test_web_ui_build.py`, `test_gateway_client_recovery_backlog.py`,
+  `test_gateway_service_choice.py`, `test_tui_npm_install.py` (rest), and the
+  `tests/gateway` list above.
+
+The Linux column above is from before the fix; the large workflow re-runs on
+this change and its numbers replace the table once read.
+
+Pre-fix Linux failures by file (run 42961698151):
 
 - `tests/hermes_cli`: concentrated in the updater and source-build suites
   (`test_update_target_identity.py` 31, `test_update_finish.py` 16,
