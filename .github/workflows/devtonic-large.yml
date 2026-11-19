@@ -1,12 +1,20 @@
 name: Devtonic large baseline
-# Measures the large test areas (`baseline.py --set large`) on Linux with the
-# messaging extras installed. Not a required check: it is slow (one job per
-# area) and has known host-dependent failures, see docs/devtonic/test-baseline.md.
+# Measures the large test areas (`baseline.py --set large`) on Linux in the same
+# environment as upstream's own test job (.github/workflows/tests.yml): PM-pinned
+# Python (a SQLite without the WAL-reset bug), the tests.yml extras (incl.
+# acp, fal, keychain), pnpm/Node and ripgrep on PATH.
+# baseline.py strips the env to run_tests.sh's allowlist, so setup-pm's
+# HERMES_HOME export does not reach the tests. A failure left in this table is
+# not explained by a thinner dev environment.
+# Not a required check: it is slow (one job per area), see
+# docs/devtonic/test-baseline.md.
 on:
   workflow_dispatch:
   pull_request:
     paths:
       - .github/workflows/devtonic-large.yml
+permissions:
+  contents: read
 jobs:
   area:
     runs-on: ubuntu-latest
@@ -17,23 +25,38 @@ jobs:
         target: [tui_gateway, tools, agent, gateway, hermes_cli]
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
-      - name: Install (dev + test groups, messaging extra)
-        # The env lives outside the checkout: the updater suites treat a
-        # checkout-local .venv as the install's own interpreter and retarget
-        # `hermes update` to it (hermes_cli/update_owning_install.py).
-        env:
-          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/devtonic-env
-        run: uv sync --frozen --group dev --group test --extra messaging
+      - name: Install ripgrep (prebuilt binary, as in tests.yml)
+        run: |
+          set -euo pipefail
+          RG_VERSION=15.1.0
+          RG_SHA256=1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+          RG_TARBALL=ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl.tar.gz
+          curl -sSfL --retry 3 --retry-delay 5 -o "$RG_TARBALL" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RG_VERSION}/${RG_TARBALL}"
+          echo "${RG_SHA256}  ${RG_TARBALL}" | sha256sum -c -
+          tar -xzf "$RG_TARBALL"
+          sudo mv "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl/rg" /usr/local/bin/rg
+          rm -rf "$RG_TARBALL" "ripgrep-${RG_VERSION}-x86_64-unknown-linux-musl"
+      - name: Set up locked Python and test dependencies (as in tests.yml)
+        # The isolated test env lives under $RUNNER_TEMP, outside the checkout:
+        # the updater suites treat a checkout-local .venv as the install's own
+        # interpreter and retarget `hermes update` to it
+        # (hermes_cli/update_owning_install.py).
+        uses: ./.github/actions/setup-pm
+        with:
+          packages: pnpm
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+      - name: Check SQLite runs WAL (as in tests.yml)
+        run: |
+          "$HERMES_PYTHON" -c "import sqlite3, sys, hermes_state_wal as w; v = w.is_sqlite_wal_reset_vulnerable(); print(f'Python {sys.version.split()[0]}, SQLite {sqlite3.sqlite_version}, WAL-reset vulnerable: {v}'); sys.exit(1 if v else 0)"
       - name: Baseline tests/${{ matrix.target }}
         # The table is the deliverable; failures are recorded, not gating.
         # --timeout is per test file: a file that hangs (e.g. gateway daemon
         # waits) is recorded as a timeout instead of eating the job budget.
         continue-on-error: true
-        env:
-          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/devtonic-env
         run: >-
-          uv run --no-sync python scripts/devtonic/baseline.py tests/${{ matrix.target }}
+          "$HERMES_PYTHON" scripts/devtonic/baseline.py tests/${{ matrix.target }}
           --rerun-failed --timeout 300
           --json large-${{ matrix.target }}.json --markdown "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
