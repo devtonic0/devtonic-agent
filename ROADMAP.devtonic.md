@@ -8,7 +8,7 @@ The autonomous improvement loop works these items top-down. When an item lands, 
   - [x] Measure the large areas (`tests/agent`, `tests/tools`, `tests/gateway`, `tests/hermes_cli`, `tests/tui_gateway`) and add them to the baseline doc (macOS, `--set large --rerun-failed`, [#5](https://github.com/devtonic0/devtonic-agent/pull/5))
   - [x] Re-measure the large set with the messaging extras (`aiohttp`) installed, and record the Linux column (Linux, `devtonic-large.yml`, [#6](https://github.com/devtonic0/devtonic-agent/pull/6))
   - [ ] Triage the Linux large-set failures (`tests/hermes_cli` updater/source-build suites ~150, gateway 13 + 2 per-file timeouts, tools/agent collection errors)
-    - [x] Find and fix harness artifacts: checkout-local `.venv` retargets `hermes update` tests, `-p no:cacheprovider` in argv breaks `test_relaunch` (PR_LINK)
+    - [x] Find and fix harness artifacts: checkout-local `.venv` retargets `hermes update` tests, `-p no:cacheprovider` in argv breaks `test_relaunch` ([#7](https://github.com/devtonic0/devtonic-agent/pull/7))
     - [ ] Re-measure the Linux large set with the fix and update the Linux table
     - [ ] Triage what remains: `test_update_autostash` / `test_update_fleet_restart_pending` bare-`.git` damage check, the not-yet-rerun updater files, gateway 13 + 2 timeouts
   - [ ] Fix or mark the macOS-only failures in the large set (`/private/var` path compares, bash 3.2 pipeline status, real-home guard on host tools)
