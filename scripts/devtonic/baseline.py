@@ -127,17 +127,43 @@ def parse_reasons(output: str) -> dict[str, str]:
     return reasons
 
 
-def pytest_env(base: dict[str, str] | None = None) -> dict[str, str]:
-    """Environment for one pytest subprocess.
+# What scripts/run_tests.sh forwards through its `env -i` on POSIX: locations
+# and test-runner knobs, never credentials or Hermes state pointers. Anything
+# else in the caller's env (HERMES_HOME, HERMES_RUNTIME_DIR, PYTHONPATH, API
+# keys) changes what the suite sees; e.g. upstream's setup-pm CI action exports
+# HERMES_HOME, and the tests' real-home guard then fails every file that
+# touches it ("TEST BUG: file I/O against the REAL hermes home").
+FORWARDED_ENV = (
+    "PATH",
+    "HOME",
+    "TMPDIR",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "CI",
+    "GITHUB_ACTIONS",
+    "HERMES_TEST_IMAGE",
+    "HERMES_GATEWAY_LOCK_DIR",
+    "HERMES_E2E_REQUIRE_TUI",
+    "PYTEST_ADDOPTS",
+)
 
+
+def pytest_env(base: dict[str, str] | None = None) -> dict[str, str]:
+    """Hermetic environment for one pytest subprocess, as ``scripts/run_tests.sh`` builds it.
+
+    Only ``FORWARDED_ENV`` survives from ``base`` (default ``os.environ``).
     ``-p no:cacheprovider`` goes through ``PYTEST_ADDOPTS`` rather than argv:
     some tests compare ``sys.argv`` of the pytest process (e.g. the relaunch
     argv in ``tests/hermes_cli/test_relaunch.py``), and extra argv entries
     show up there as false failures.
     """
+    source = os.environ if base is None else base
+    env = {k: source[k] for k in FORWARDED_ENV if source.get(k)}
     # A wide COLUMNS keeps pytest from cutting the short-summary reason at 80
     # chars (it sizes those lines to the terminal, and there is none here).
-    env = dict(os.environ if base is None else base, TZ="UTC", PYTHONHASHSEED="0", COLUMNS="400")
+    env.update(
+        TZ="UTC", LANG="C.UTF-8", LC_ALL="C.UTF-8", PYTHONHASHSEED="0", PYTHONUTF8="1", COLUMNS="400"
+    )
     addopts = env.get("PYTEST_ADDOPTS", "").split()
     if "no:cacheprovider" not in addopts:
         addopts += ["-p", "no:cacheprovider"]

@@ -5,8 +5,10 @@ name: Devtonic Linux triage
 #
 # The environment mirrors upstream's own test job (.github/workflows/tests.yml):
 # PM-pinned Python (a SQLite without the WAL-reset bug), the same extras
-# (incl. acp, fal, keychain), pnpm/Node and ripgrep on PATH. A failure that
-# survives here is not explained by a thinner dev environment.
+# (incl. acp, fal, keychain), pnpm/Node and ripgrep on PATH; baseline.py strips
+# the env to run_tests.sh's allowlist, so setup-pm's HERMES_HOME export does not
+# reach the tests. A failure that survives here is not explained by a thinner
+# dev environment.
 # Not a required check; see docs/devtonic/test-baseline.md.
 on:
   workflow_dispatch:

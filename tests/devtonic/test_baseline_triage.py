@@ -105,6 +105,41 @@ def test_failing_from_reruns_only_the_reported_files(baseline, tmp_path, monkeyp
     assert seen == ["tests/a/test_x.py", "tests/a/test_slow.py", "tests/c/test_z.py"]
 
 
+def test_pytest_env_drops_hermes_state_and_credentials(baseline):
+    """Same isolation as scripts/run_tests.sh: a CI-exported HERMES_HOME or a
+    key in the caller's shell never reaches the suite."""
+    env = baseline.pytest_env(
+        {
+            "PATH": "/bin",
+            "HOME": "/home/u",
+            "HERMES_HOME": "/runner/setup-pm",
+            "HERMES_RUNTIME_DIR": "/runner/setup-pm/tools",
+            "PYTHONPATH": "/repo",
+            "OPENAI_API_KEY": "sk-test",
+            "CI": "true",
+        }
+    )
+    assert env["PATH"] == "/bin" and env["HOME"] == "/home/u" and env["CI"] == "true"
+    for leaked in ("HERMES_HOME", "HERMES_RUNTIME_DIR", "PYTHONPATH", "OPENAI_API_KEY"):
+        assert leaked not in env
+    assert env["TZ"] == "UTC" and env["LANG"] == "C.UTF-8"
+
+
+def test_child_pytest_never_sees_the_callers_hermes_home(baseline, tmp_path, monkeypatch):
+    probe = tmp_path / "test_env_probe.py"
+    probe.write_text(
+        "import os\n"
+        "def test_env():\n"
+        "    assert os.environ.get('DEVTONIC_PROBE_SECRET') is None\n"
+        "    assert os.environ.get('HERMES_RUNTIME_DIR') is None\n"
+    )
+    monkeypatch.setenv("DEVTONIC_PROBE_SECRET", "x")
+    monkeypatch.setenv("HERMES_RUNTIME_DIR", str(tmp_path / "store"))
+    monkeypatch.setattr(baseline, "REPO_ROOT", tmp_path)
+    res = baseline.run_target(probe.name, timeout=120, extra=[])
+    assert res.status == "pass", (res.summary, res.reasons)
+
+
 def test_failing_from_with_nothing_failing_runs_nothing(baseline, tmp_path, monkeypatch, capsys):
     ok = _write(baseline, tmp_path / "ok.json", baseline.TargetResult("tests/a", 0, 1.0, {}, "", []))
     monkeypatch.setattr(baseline, "run_isolated", lambda *_a: pytest.fail("nothing to rerun"))
