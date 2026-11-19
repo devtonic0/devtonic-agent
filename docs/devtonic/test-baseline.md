@@ -12,7 +12,12 @@ uv run python scripts/devtonic/baseline.py tests/cron      # explicit targets
 uv run python scripts/devtonic/baseline.py --json out.json # machine-readable results
 uv run python scripts/devtonic/baseline.py tests/x -- -k foo   # args after -- go to pytest
 uv run python scripts/devtonic/baseline.py --set large --rerun-failed  # large areas, flakes split out (~45 min)
+uv run python scripts/devtonic/baseline.py --failing-from large.json  # rerun only the files that failed there
 ```
+
+Results JSON carries each failure's one-line pytest reason (`reasons`, node id
+→ `AssertionError: ...`), and `--markdown` prints it next to the node id, so a
+CI artifact is enough to sort failures by cause.
 
 For `--set large`, put the env outside the checkout
 (`UV_PROJECT_ENVIRONMENT=/some/other/path uv sync ...` and the same variable on
@@ -25,9 +30,12 @@ For `--set large`, put the env outside the checkout
   directory in one process leaks module state between files and produces false
   failures — e.g. `tests/providers` shows 19 failures in one process and 0 per
   file. `--per-dir` restores the single-process mode for debugging.
-- `TZ=UTC` and `PYTHONHASHSEED=0` are pinned. `tests/conftest.py` sandboxes
-  `HERMES_HOME` and fences the network, so the baseline never touches a real
-  `~/.hermes` install.
+- Like `run_tests.sh`, the child environment is rebuilt from an allowlist
+  (`PATH`, `HOME`, `TMPDIR`, cert locations, CI flags, test-runner knobs);
+  `HERMES_HOME`, `HERMES_RUNTIME_DIR`, `PYTHONPATH` and credentials never reach
+  the tests. `TZ=UTC`, `LANG=C.UTF-8` and `PYTHONHASHSEED=0` are pinned.
+  `tests/conftest.py` sandboxes `HERMES_HOME` and fences the network, so the
+  baseline never touches a real `~/.hermes` install.
 - `scripts/run_tests.sh` remains the CI-parity runner; it needs the
   `pm.build_env` test interpreter (see `tests/AGENTS.md`). `baseline.py` only
   needs the repo's `uv` environment.
@@ -155,89 +163,90 @@ one job per area, with `uv sync --group dev --group test --extra messaging`,
 PRs that touch the workflow file, and is not a required check. The `summary` job merges the per-area JSON with
 `baseline.py --merge-json` into a `large-linux` artifact.
 
-Measured on `ubuntu-latest` (4 CPUs), run 42961698151:
+Measured on `ubuntu-latest` (4 CPUs) after the harness fix in
+[#7](https://github.com/devtonic0/devtonic-agent/pull/7), run
+[44458042669](https://github.com/devtonic0/devtonic-agent/actions/runs/44458042669).
+The #7 fix: the large workflow keeps the uv env outside the checkout
+(`UV_PROJECT_ENVIRONMENT`), because `hermes_cli/update_owning_install.py`
+treats a checkout-local `venv`/`.venv` as the install's own interpreter and
+points every updater test at the repo instead. `baseline.py` also passes
+`-p no:cacheprovider` via `PYTEST_ADDOPTS`, because `test_relaunch.py`
+compares the child's `sys.argv`.
 
 | Target | Status | Passed | Failed | Errors | Skipped | Time (s) |
 |---|---|---|---|---|---|---|
-| `tests/tui_gateway` | pass | 3176 | 0 | 0 | 1 | 542 |
-| `tests/tools` | fail | 11271 | 5 | 1 | 181 | 688 |
-| `tests/agent` | fail | 12472 | 2 | 1 | 49 | 776 |
-| `tests/gateway` | timeout | 13654 | 13 | 0 | 81 | 2472 |
-| `tests/hermes_cli` | fail | 19076 | 95 | 54 | 429 | 1436 |
+| `tests/tui_gateway` | pass | 3176 | 0 | 0 | 1 | 549 |
+| `tests/tools` | fail | 11271 | 5 | 1 | 181 | 803 |
+| `tests/agent` | fail | 12472 | 2 | 1 | 49 | 1000 |
+| `tests/gateway` | timeout | 13656 | 11 | 0 | 81 | 2640 |
+| `tests/hermes_cli` | fail | 19144 | 27 | 54 | 429 | 1217 |
 
-59,649 passing tests. With `aiohttp` installed, gateway drops from 321
-failures/errors (macOS, no extras) to 13 plus two files that hang past the
-300 s per-file cap (`test_legacy_desktop_source.py`,
-`test_route_transition_racing_turn.py`). `tui_gateway` is fully green on
-Linux, so its macOS failures are host-specific (real-home guard, `acp`).
-Flaky under parallel load: `tests/gateway/test_session_tui_ops.py`.
+59,719 passing tests (up from 59,649 before the fix). `tests/hermes_cli` drops
+from 149 failures/errors to 81, and the files that went fully green are
+`test_commit_build_cli.py`, `test_relaunch.py`, `test_source_release_channels.py`,
+`test_update_autostash.py`, `test_update_channel.py`,
+`test_update_fleet_restart_pending.py`, `test_update_head_moved_gate.py`,
+`test_update_parked_branch_guard.py`, `test_update_target_identity.py` (31),
+`test_update_venv_holder_retirement.py`. So the bare-`.git` damage check in
+`test_update_autostash.py` / `test_update_fleet_restart_pending.py` seen on
+macOS does not reproduce on Linux (git 2.56 vs Apple git 2.39). Gateway is
+unchanged apart from `test_update_streaming.py` going green.
 
-#### Triage of the Linux failures
+#### Triage of what remains: environment, not product bugs
 
-Two harness artifacts, not product bugs, explain most of the `tests/hermes_cli`
-failures and two of the `tests/tools`/`tests/agent` ones. Both are fixed in
-`baseline.py` / `devtonic-large.yml`:
+The large workflow's thin env (`uv sync --group dev --group test --extra
+messaging`, system git/no pnpm/no ripgrep) is not the env upstream tests in.
+`.github/workflows/devtonic-triage.yml` reruns only the failing files from a
+large run's `large-linux` artifact (`baseline.py --failing-from`) in upstream's
+own test env, the same setup as `.github/workflows/tests.yml`: the `setup-pm` action
+(PM-pinned Python with a SQLite that does not have the WAL-reset bug, the
+`all`/`fal`/`keychain`/... extras, pnpm + Node), and ripgrep 15.1. It takes
+about 5 minutes instead of 55. Run
+[44567583336](https://github.com/devtonic0/devtonic-agent/actions/runs/44567583336):
+**33 of the 35 failing files pass**, including both gateway files that timed
+out at 300 s (`test_legacy_desktop_source.py`, `test_route_transition_racing_turn.py`
+pass in 2 s).
 
-1. **Checkout-local venv.** `uv sync` puts the env at `./.venv`.
-   `hermes_cli/update_owning_install.py` treats a `venv`/`.venv` directly under a
-   checkout as that install's own interpreter, so every `hermes update` test that
-   builds a temporary checkout re-runs itself against the repo instead (or trips
-   the tests' audit hook on the retarget `subprocess.call`). Fix: the large
-   workflow sets `UV_PROJECT_ENVIRONMENT=${{ runner.temp }}/devtonic-env`, and
-   `baseline.py` prints a note when it runs on a checkout venv.
-2. **Extra pytest argv.** `baseline.py` passed `-p no:cacheprovider` on the
-   command line; `test_relaunch.py::test_calls_execvp` compares the pytest
-   process's `sys.argv`. Fix: the flag goes through `PYTEST_ADDOPTS`.
+Each failure's short reason is now in the JSON (`reasons`), and that is how
+these were sorted:
 
-Rerunning every failing non-gateway file from run 42961698151 on macOS with both
-fixes (env at a path outside the checkout):
-
-| Now passing | Still failing |
+| Cause in the thin env | Files |
 |---|---|
-| `test_commit_build_cli.py`, `test_desktop_build_reuse.py`, `test_desktop_source_build.py`, `test_doctor_pm_store_probe.py`, `test_doctor_structural_corruption.py`, `test_kanban_boards.py`, `test_kanban_core_functionality.py`, `test_kanban_worker_*`, `test_relaunch.py`, `test_source_build.py`, `test_source_release_channels.py`, `test_update_channel.py`, `test_update_finish.py`, `test_update_head_moved_gate.py`, `test_update_parked_branch_guard.py`, `test_update_post_commit_safety.py`; tools `test_search_*` (2); agent `test_runtime_self_protection.py` | see below |
+| Missing extras: `acp` (`agent-client-protocol`), `keyring`, `fal_client` | gateway `test_model_confirmation_clients.py`, `test_session_edit_policy.py`, `test_session_mutation_model.py`, `test_session_policy_refusal_fields.py`; `test_gateway_client_recovery_backlog.py`, `test_conversation_compression_manual.py[acp]`, `test_vault_key_*.py`, `test_fal_sdk.py` |
+| No `pnpm` on PATH (`source-build integration requires node and pnpm`) | `test_source_build.py` (13), `test_tui_npm_install.py` (7), `test_web_ui_build.py` (6), `test_desktop_source_build.py` (3) |
+| No `rg` on PATH | `test_doctor_pm_store_probe.py` (8), `tools/test_search_*` (5) |
+| uv's system CPython links SQLite 3.46.1, which has the WAL-reset bug, so Hermes picks DELETE mode and extra repair/warning paths fire | `test_update_finish.py` (16), `test_update_post_commit_safety.py` (2, extra `sqlite_runtime` follow-up), `test_doctor_structural_corruption.py`, `test_watch_notification_reset_pin.py` |
+| Runner env leaks into the tests: with the caller's full env, kanban dispatch decides it must create a restart-safe systemd scope (`cannot create restart-safe systemd scope ... no current run id`), and the service-choice tests hit the runner's real `~/.config/systemd/user`. Both pass once the child env is reduced to `run_tests.sh`'s allowlist; which forwarded variable triggers the systemd path was not isolated | 6 kanban worker-spawn files (8 tests), `test_kanban_multiplex_served_profile_parity.py`, `test_gateway_service_choice.py` |
+| Fail alone in the thin env but pass in upstream's env, cause not isolated (likely the DELETE-mode SQLite above: lock contention and slower writes) | `test_claim_reopen_off_loop.py` (owner loop stalled 1.01 s), the two 300 s timeouts |
 
-Still failing after the fix (real, or not yet explained):
+The systemd and `HERMES_HOME` leaks are why `baseline.py` now builds the
+pytest child's environment like `scripts/run_tests.sh` (`env -i` plus an
+allowlist: `PATH`, `HOME`, `TMPDIR`, cert locations, CI flags, test-runner
+knobs). The first triage pass inherited `setup-pm`'s exported `HERMES_HOME`
+and tripped the tests' real-home guard in 31 tests.
 
-- Missing optional deps, expected: `tests/agent/test_vault_key_storage.py`,
-  `tests/hermes_cli/test_vault_key_cli.py` (`keyring`), `tests/tools/test_fal_sdk.py`
-  (`fal_client`), `test_conversation_compression_manual.py[acp]` (`acp`).
-- `test_update_autostash.py` (8) and `test_update_fleet_restart_pending.py` (7):
-  the updater sees the test's bare `tmp_path/.git` dir as a damaged checkout
-  ("git no longer recognizes ... .git") before the mocked fetch. Reproduces on
-  macOS (Apple git 2.39); Linux status pending the next large run.
-- One each: `test_kanban_db.py::test_infrastructure_spawn_refusal_never_charges_the_card`,
-  `test_session_recovery_lost_and_found.py::test_unreadable_schema_without_cli_names_the_sqlite3_requirement`
-  (host `sqlite3` CLI), `test_tui_npm_install.py::test_runtime_node_comes_from_pm_without_legacy_repair`
-  (real-home guard on `bin/node`).
-- Not rerun in this pass (time budget): `test_update_recovery_closure.py`,
-  `test_update_target_identity.py`, `test_update_venv_holder_retirement.py`,
-  `test_web_ui_build.py`, `test_gateway_client_recovery_backlog.py`,
-  `test_gateway_service_choice.py`, `test_tui_npm_install.py` (rest), and the
-  `tests/gateway` list above.
+Still failing in upstream's env, both reproducible alone:
 
-The Linux column above is from before the fix; the large workflow re-runs on
-this change and its numbers replace the table once read.
+- `tests/agent/test_runtime_self_protection.py::test_find_delete_over_own_venv_is_detected`:
+  the negative case `find /tmp -name __pycache__ -delete` is expected to be
+  allowed, but the fixture builds the fake runtime under pytest's `tmp_path`,
+  which is under `/tmp` on Linux. So that `find` really does cover the
+  protected venv and gets flagged. The product behaves correctly, and the test
+  is host-dependent. It passes on macOS, where `tmp_path` is under
+  `/private/var/folders`. Fix candidate for upstream: use a sibling path of the
+  fixture instead of the literal `/tmp`.
+- `tests/hermes_cli/test_session_recovery_lost_and_found.py::test_unreadable_schema_without_cli_names_the_sqlite3_requirement`:
+  host-tool dependent. The test expects the "no usable sqlite3 CLI" message to
+  name `.recover`, but the host's `sqlite3` CLI (Ubuntu and macOS) is found and
+  judged unsafe, which produces a different message. Fails on macOS too.
 
-Pre-fix Linux failures by file (run 42961698151):
-
-- `tests/hermes_cli`: concentrated in the updater and source-build suites
-  (`test_update_target_identity.py` 31, `test_update_finish.py` 16,
-  `test_source_build.py` 13, `test_update_autostash.py` 8,
-  `test_update_recovery_closure.py` 8, `test_doctor_pm_store_probe.py` 8,
-  `test_tui_npm_install.py` 7, `test_web_ui_build.py` 6,
-  `test_commit_build_cli.py` 6, plus ~20 files with 1–4 each). Likely
-  environment-sensitive (CI checkout, git identity, npm/node), unverified.
-- `tests/tools`: `test_search_zero_match_and_multipath.py` (4),
-  `test_search_auto_multiline.py` (1), `test_fal_sdk.py` (collection error,
-  `fal_client` not installed).
-- `tests/agent`: `test_conversation_compression_manual.py[acp]`,
-  `test_runtime_self_protection.py::test_find_delete_over_own_venv_is_detected`,
-  `test_vault_key_storage.py` (collection error).
-- `tests/gateway`: `test_session_client_env.py` (2), `test_session_edit_policy.py` (2),
-  `test_session_policy_refusal_fields.py` (2), and one each in
-  `test_claim_reopen_off_loop.py`, `test_kanban_multiplex_served_profile_parity.py`,
-  `test_model_confirmation_clients.py`, `test_session_mutation_model.py`,
-  `test_update_streaming.py`, `test_watch_notification_reset_pin.py`.
+macOS rerun of the same 35 files (`--failing-from`, messaging extra, env outside
+the checkout, uv's Python with SQLite 3.53): 19 pass. The remainder are the macOS
+classes already listed above (missing `acp`/`keyring`/`fal_client`, the
+real-home guard on a host `node`, `/var` → `/private/var`), plus
+`test_update_recovery_closure.py` (8) and the pnpm-driven source-build tests
+running against the host's nvm Node. `test_update_recovery_closure.py` passes on
+Linux in upstream's env.
 
 ## Not yet measured
 
