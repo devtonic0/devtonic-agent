@@ -1,0 +1,51 @@
+name: Devtonic Linux triage
+# Reruns only the files that failed in an earlier "Devtonic large baseline"
+# run (its `large-linux` artifact), one file at a time, and records each
+# failure's short-summary reason. Minutes instead of the ~55 min full set.
+# Not a required check; see docs/devtonic/test-baseline.md.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Devtonic large baseline run id whose large-linux artifact to triage"
+        required: true
+  pull_request:
+    paths:
+      - .github/workflows/devtonic-triage.yml
+permissions:
+  contents: read
+  actions: read
+env:
+  # Large run measured after the harness fix (#7); PR runs triage this one.
+  DEFAULT_RUN_ID: "44458042669"
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: Install (dev + test groups, messaging extra)
+        # Outside the checkout for the same reason as devtonic-large.yml.
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/devtonic-env
+        run: uv sync --frozen --group dev --group test --extra messaging
+      - name: Fetch the large-set results
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id || env.DEFAULT_RUN_ID }}
+        run: gh run download "$RUN_ID" -R "$GITHUB_REPOSITORY" -n large-linux -D "$RUNNER_TEMP/large"
+      - name: Rerun the failing files
+        continue-on-error: true
+        env:
+          UV_PROJECT_ENVIRONMENT: ${{ runner.temp }}/devtonic-env
+        run: >-
+          uv run --no-sync python scripts/devtonic/baseline.py
+          --failing-from "$RUNNER_TEMP/large/large-linux.json" --timeout 300
+          --json triage-linux.json --markdown "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: triage-linux
+          path: triage-linux.json
+          if-no-files-found: ignore

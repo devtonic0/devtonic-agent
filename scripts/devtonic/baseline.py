@@ -13,6 +13,7 @@ Usage::
     uv run python scripts/devtonic/baseline.py tests/cron    # explicit targets
     uv run python scripts/devtonic/baseline.py --json out.json --timeout 900
     uv run python scripts/devtonic/baseline.py --set large --rerun-failed
+    uv run python scripts/devtonic/baseline.py --failing-from large.json   # rerun only what failed
 
 The tests' own ``conftest.py`` sandboxes ``HERMES_HOME``, so running this
 never reads or writes a real Hermes install.
@@ -65,6 +66,9 @@ _COUNT_RE = re.compile(r"(\d+) (passed|failed|errors?|skipped|xfailed|xpassed|de
 # Short-summary lines only ("FAILED path.py::node - msg"); captured log records
 # also start with "ERROR" but are followed by spaces and a logger name.
 _FAILURE_RE = re.compile(r"^(?:FAILED|ERROR) (\S+\.py(?:::\S+)?)")
+_REASON_RE = re.compile(r"^(?:FAILED|ERROR) (\S+\.py(?:::\S+)?) - (.+)$")
+# Short-summary reasons are kept to one readable line in the JSON/markdown.
+REASON_MAX = 200
 
 
 @dataclass
@@ -78,6 +82,9 @@ class TargetResult:
     # Files that failed in the parallel run but passed when rerun alone
     # (``--rerun-failed``): load/ordering-sensitive, not deterministic failures.
     flaky: list[str] = field(default_factory=list)
+    # Node id -> the one-line reason pytest printed in its short summary
+    # ("AssertionError: ..."), so a CI artifact is enough to triage a failure.
+    reasons: dict[str, str] = field(default_factory=dict)
 
     @property
     def status(self) -> str:
@@ -108,6 +115,18 @@ def parse_summary(output: str) -> tuple[dict[str, int], str, list[str]]:
     return counts, summary, failures
 
 
+def parse_reasons(output: str) -> dict[str, str]:
+    """Map failing node ids to their short-summary reason, trimmed to one line."""
+    reasons: dict[str, str] = {}
+    for ln in output.splitlines():
+        if m := _REASON_RE.match(ln.strip()):
+            reason = m.group(2).strip()
+            if len(reason) > REASON_MAX:
+                reason = reason[: REASON_MAX - 3] + "..."
+            reasons.setdefault(m.group(1), reason)
+    return reasons
+
+
 def pytest_env(base: dict[str, str] | None = None) -> dict[str, str]:
     """Environment for one pytest subprocess.
 
@@ -116,7 +135,9 @@ def pytest_env(base: dict[str, str] | None = None) -> dict[str, str]:
     argv in ``tests/hermes_cli/test_relaunch.py``), and extra argv entries
     show up there as false failures.
     """
-    env = dict(os.environ if base is None else base, TZ="UTC", PYTHONHASHSEED="0")
+    # A wide COLUMNS keeps pytest from cutting the short-summary reason at 80
+    # chars (it sizes those lines to the terminal, and there is none here).
+    env = dict(os.environ if base is None else base, TZ="UTC", PYTHONHASHSEED="0", COLUMNS="400")
     addopts = env.get("PYTEST_ADDOPTS", "").split()
     if "no:cacheprovider" not in addopts:
         addopts += ["-p", "no:cacheprovider"]
@@ -158,8 +179,11 @@ def run_target(target: str, timeout: int, extra: list[str]) -> TargetResult:
         out = (exc.stdout or b"").decode() if isinstance(exc.stdout, bytes) else (exc.stdout or "")
         counts, _, failures = parse_summary(out)
         return TargetResult(target, -1, time.monotonic() - start, counts, f"timeout after {timeout}s", failures)
-    counts, summary, failures = parse_summary(proc.stdout + proc.stderr)
-    return TargetResult(target, proc.returncode, time.monotonic() - start, counts, summary, failures)
+    output = proc.stdout + proc.stderr
+    counts, summary, failures = parse_summary(output)
+    return TargetResult(
+        target, proc.returncode, time.monotonic() - start, counts, summary, failures, reasons=parse_reasons(output)
+    )
 
 
 def expand_target(target: str) -> list[str]:
@@ -195,7 +219,9 @@ def run_isolated(target: str, timeout: int, extra: list[str], jobs: int) -> Targ
         parts = list(pool.map(lambda f: run_target(f, timeout, extra), files))
     counts: dict[str, int] = {}
     failures: list[str] = []
+    reasons: dict[str, str] = {}
     for part in parts:
+        reasons.update(part.reasons)
         for key, num in part.counts.items():
             counts[key] = counts.get(key, 0) + num
         failures.extend(part.failures)
@@ -207,7 +233,7 @@ def run_isolated(target: str, timeout: int, extra: list[str], jobs: int) -> Targ
     elif worst == 5:
         worst = 0
     summary = ", ".join(f"{n} {k}" for k, n in sorted(counts.items())) + f" across {len(files)} files"
-    return TargetResult(target, worst, time.monotonic() - start, counts, summary, failures)
+    return TargetResult(target, worst, time.monotonic() - start, counts, summary, failures, reasons=reasons)
 
 
 def failing_files(failures: list[str]) -> list[str]:
@@ -231,6 +257,8 @@ def rerun_failed(result: TargetResult, timeout: int, extra: list[str]) -> Target
         return result
     flaky: list[str] = []
     still_failing: list[str] = []
+    # Reasons come from the isolated rerun only: no -j load noise.
+    reasons: dict[str, str] = {}
     rc = 0
     for path in failing_files(result.failures):
         again = run_target(path, timeout, extra)
@@ -239,8 +267,11 @@ def rerun_failed(result: TargetResult, timeout: int, extra: list[str]) -> Target
             continue
         if _exit_rank(again.returncode) > _exit_rank(rc):
             rc = again.returncode
+        reasons.update(again.reasons)
         still_failing.extend(again.failures or [f"{path} ({again.summary or 'exit ' + str(again.returncode)})"])
-    return TargetResult(result.target, rc, result.seconds, result.counts, result.summary, still_failing, flaky)
+    return TargetResult(
+        result.target, rc, result.seconds, result.counts, result.summary, still_failing, flaky, reasons
+    )
 
 
 def render_table(results: list[TargetResult]) -> str:
@@ -282,7 +313,11 @@ def render_markdown(results: list[TargetResult], header: str | None = None) -> s
     failing = [(r.target, node) for r in results for node in r.failures]
     if failing:
         parts += ["", "Failures:", ""]
-        parts += [f"- `{target}`: `{node}`" for target, node in failing]
+        reasons = {node: why for r in results for node, why in r.reasons.items()}
+        parts += [
+            f"- `{target}`: `{node}`" + (f" — {reasons[node]}" if node in reasons else "")
+            for target, node in failing
+        ]
     flaky = [(r.target, path) for r in results for path in r.flaky]
     if flaky:
         parts += ["", "Flaky (failed under parallel load, passed alone):", ""]
@@ -298,6 +333,20 @@ def load_results(paths: list[Path]) -> list[TargetResult]:
             row = {k: v for k, v in row.items() if k != "status"}
             results.append(TargetResult(**row))
     return results
+
+
+def failing_from(paths: list[Path]) -> list[str]:
+    """Test files that still failed in earlier ``--json`` results, in order, deduped.
+
+    Lets a slow area be re-triaged in minutes: rerun only the files a previous
+    (e.g. CI artifact) run reported, instead of the whole target set.
+    """
+    files: list[str] = []
+    for res in load_results(paths):
+        for path in failing_files(res.failures):
+            if path not in files:
+                files.append(path)
+    return files
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -343,7 +392,19 @@ def main(argv: list[str] | None = None) -> int:
         metavar="FILE",
         help="run nothing; combine earlier --json results into one table (and --json/--markdown outputs)",
     )
+    parser.add_argument(
+        "--failing-from",
+        type=Path,
+        nargs="+",
+        metavar="FILE",
+        help="add the failing test files from earlier --json results as targets",
+    )
     args = parser.parse_args(argv)
+    if args.failing_from:
+        args.targets = [*args.targets, *failing_from(args.failing_from)]
+        if not args.targets:
+            print("no failing files in " + ", ".join(map(str, args.failing_from)), file=sys.stderr)
+            return 0
 
     header = None
     if args.merge_json:
