@@ -86,12 +86,16 @@ def test_uv_python_uninstall_of_other_version_is_allowed(fake_runtime):
     assert rsp.command_deletes_runtime("uv python uninstall 3.9") is None
 
 
-def test_find_delete_over_own_venv_is_detected(fake_runtime):
+def test_find_delete_over_own_venv_is_detected(fake_runtime, tmp_path):
     # Both are deletes under the protected root: an unfiltered -delete removes
     # the interpreter itself, and a filtered one still deletes protected files.
     assert rsp.command_deletes_runtime(f"find '{fake_runtime['venv']}' -delete") is not None
     assert rsp.command_deletes_runtime(f"find '{fake_runtime['venv']}' -name __pycache__ -delete") is not None
-    assert rsp.command_deletes_runtime("find /tmp -name __pycache__ -delete") is None
+    # The negative case needs a tree that does not contain the fake runtime.
+    # A literal /tmp does on Linux, where pytest's tmp_path lives under it.
+    unrelated = tmp_path / "scratch"
+    unrelated.mkdir()
+    assert rsp.command_deletes_runtime(f"find '{unrelated}' -name __pycache__ -delete") is None
 
 
 def test_rm_of_unrelated_venv_is_allowed(fake_runtime, tmp_path):

@@ -184,6 +184,10 @@ section (`test_runtime_self_protection.py` `/tmp` fixture overlap,
 `test_session_recovery_lost_and_found.py` host `sqlite3` CLI). Everything else
 the thin env reported was environment, as the triage below concluded.
 
+Both are test-side host dependencies, now fixed in the fork (see "Fixed in
+the fork" at the end of this section), so the large set is expected to be
+fully green on Linux in upstream's env.
+
 The rest of this section is the history that led here.
 
 #### Earlier measurement (thin env, after the #7 harness fix)
@@ -264,6 +268,20 @@ Still failing in upstream's env, both reproducible alone:
   host-tool dependent. The test expects the "no usable sqlite3 CLI" message to
   name `.recover`, but the host's `sqlite3` CLI (Ubuntu and macOS) is found and
   judged unsafe, which produces a different message. Fails on macOS too.
+
+Fixed in the fork (test-only, both shaped for an upstream PR):
+
+- `test_find_delete_over_own_venv_is_detected`: the negative case now runs
+  against a fresh `tmp_path / "scratch"` directory that does not contain the
+  fake runtime, instead of the literal `/tmp`.
+- `test_unreadable_schema_without_cli_names_the_sqlite3_requirement`: the test
+  stubbed `find_sqlite3_cli` but not `find_sqlite3_cli_refusal`, so the
+  refusal recorded by the module-level `HAVE_SQLITE3_CLI` probe of the real
+  host CLI leaked in. A host `sqlite3` with the WAL-reset bug (Ubuntu 24.04's
+  3.45, macOS's system 3.43) left `wal_reset_vulnerable`, which selects the
+  "not safe" message without `.recover`. The test now pins the refusal to
+  `missing`, the case it describes. Upstream's current version of the test
+  (moved to `persistence.sqlite.admin._lost_and_found`) has the same gap.
 
 macOS rerun of the same 35 files (`--failing-from`, messaging extra, env outside
 the checkout, uv's Python with SQLite 3.53): 19 pass. The remainder are the macOS

@@ -11,7 +11,8 @@ The autonomous improvement loop works these items top-down. When an item lands, 
     - [x] Find and fix harness artifacts: checkout-local `.venv` retargets `hermes update` tests, `-p no:cacheprovider` in argv breaks `test_relaunch` ([#7](https://github.com/devtonic0/devtonic-agent/pull/7))
     - [x] Re-measure the Linux large set with the fix and update the Linux table; rerun the failures in upstream's test env (`devtonic-triage.yml`, `--failing-from`, failure reasons) ([#8](https://github.com/devtonic0/devtonic-agent/pull/8))
     - [x] Bring the large workflow's env up to upstream's (`setup-pm` with the `tests.yml` extras, pnpm, ripgrep) so its Linux table reflects only real failures, and re-measure ([#9](https://github.com/devtonic0/devtonic-agent/pull/9))
-    - [ ] Report or fix the two Linux failures left in upstream's env (`test_runtime_self_protection.py` `/tmp` fixture overlap, `test_session_recovery_lost_and_found.py` host `sqlite3` CLI)
+    - [x] Report or fix the two Linux failures left in upstream's env (`test_runtime_self_protection.py` `/tmp` fixture overlap, `test_session_recovery_lost_and_found.py` host `sqlite3` CLI) ([#10](https://github.com/devtonic0/devtonic-agent/pull/10))
+    - [ ] Offer both test fixes upstream (NousResearch/hermes-agent); the sqlite3 one applies to `persistence.sqlite.admin._lost_and_found` there
   - [ ] Fix or mark the macOS-only failures in the large set (`/private/var` path compares, bash 3.2 pipeline status, real-home guard on host tools)
   - [ ] Triage the `tests/hermes_state` `messages_fts` malformed-schema failures on macOS / SQLite 3.53
 - [ ] Expand Devtonic CI coverage step by step (core agent loop, tools, cron, cli) while keeping it under 15 minutes on `ubuntu-latest` (default baseline set already runs in CI, ~3 min, [#2](https://github.com/devtonic0/devtonic-agent/pull/2))
