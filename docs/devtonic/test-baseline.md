@@ -155,13 +155,38 @@ Flaky under parallel load, passed when rerun alone:
 
 Most of the macOS gateway failures come from the missing `aiohttp`.
 
-### Linux column (messaging extras installed)
+### Linux column (upstream's test env)
 
 `.github/workflows/devtonic-large.yml` runs the same set on `ubuntu-latest`,
-one job per area, with `uv sync --group dev --group test --extra messaging`,
+one job per area, in the same env as upstream's own test job
+(`.github/workflows/tests.yml`): the `setup-pm` action with the `tests.yml`
+extras and pnpm, prebuilt ripgrep 15.1, and the SQLite WAL-reset guard, with
 `--rerun-failed --timeout 300` (per file). It runs on `workflow_dispatch` and on
 PRs that touch the workflow file, and is not a required check. The `summary` job merges the per-area JSON with
 `baseline.py --merge-json` into a `large-linux` artifact.
+
+#### Current Linux table (upstream's test env)
+
+Run [44624941660](https://github.com/devtonic0/devtonic-agent/actions/runs/44624941660)
+(about 34 minutes wall clock, down from about 55):
+
+| Target | Status | Passed | Failed | Errors | Skipped | Time (s) |
+|---|---|---|---|---|---|---|
+| `tests/tui_gateway` | pass | 3176 | 0 | 0 | 1 | 532 |
+| `tests/tools` | pass | 11294 | 0 | 0 | 162 | 758 |
+| `tests/agent` | fail | 12526 | 1 | 0 | 30 | 1147 |
+| `tests/gateway` | pass | 13653 | 0 | 0 | 89 | 1998 |
+| `tests/hermes_cli` | fail | 19224 | 1 | 0 | 431 | 1497 |
+
+59,873 passing tests, no errors and no per-file timeouts. The two failures
+left are exactly the two host-dependent tests listed at the end of this
+section (`test_runtime_self_protection.py` `/tmp` fixture overlap,
+`test_session_recovery_lost_and_found.py` host `sqlite3` CLI). Everything else
+the thin env reported was environment, as the triage below concluded.
+
+The rest of this section is the history that led here.
+
+#### Earlier measurement (thin env, after the #7 harness fix)
 
 Measured on `ubuntu-latest` (4 CPUs) after the harness fix in
 [#7](https://github.com/devtonic0/devtonic-agent/pull/7), run
