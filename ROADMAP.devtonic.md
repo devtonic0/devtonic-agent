@@ -14,7 +14,8 @@ The autonomous improvement loop works these items top-down. When an item lands, 
     - [x] Report or fix the two Linux failures left in upstream's env (`test_runtime_self_protection.py` `/tmp` fixture overlap, `test_session_recovery_lost_and_found.py` host `sqlite3` CLI) ([#10](https://github.com/devtonic0/devtonic-agent/pull/10))
     - [ ] Offer both test fixes upstream (NousResearch/hermes-agent); the sqlite3 one applies to `persistence.sqlite.admin._lost_and_found` there
   - [x] Fix or mark the macOS-only failures in the large set (`/private/var` path compares, bash 3.2 pipeline status, real-home guard on host tools) ([#11](https://github.com/devtonic0/devtonic-agent/pull/11))
-    - [ ] Remaining macOS-only: 2 `tests/hermes_cli` real-home guard hits, Xvnc/xfce desktop test, launchd-vs-systemd service tests (mark `platforms("linux")` where Linux-only by design)
+    - [x] Remaining macOS-only: 2 `tests/hermes_cli` real-home guard hits, Xvnc/xfce desktop test, launchd-vs-systemd service tests (mark `platforms("linux")` where Linux-only by design)
+    - [ ] macOS leftovers outside those classes: `uv run` venv `bin` on `PATH` in `test_session_client_env.py` (2), `test_readiness.py` degraded on host, `sessions` store-holder gates and updater/source-build suites in `tests/hermes_cli`
   - [ ] Triage the `tests/hermes_state` `messages_fts` malformed-schema failures on macOS / SQLite 3.53
 - [ ] Expand Devtonic CI coverage step by step (core agent loop, tools, cron, cli) while keeping it under 15 minutes on `ubuntu-latest` (default baseline set already runs in CI, ~3 min, [#2](https://github.com/devtonic0/devtonic-agent/pull/2))
 - [ ] Add a `scripts/devtonic/sync-upstream.sh` helper plus docs: merge upstream/main, run the baseline, open a PR
