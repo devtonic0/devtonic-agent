@@ -35,6 +35,14 @@ from agent.context_compressor import MODEL_ONLY_DISPLAY_METADATA_KEY
 import tui_gateway.server as srv
 
 
+@pytest.fixture(autouse=True)
+def _isolated_wrapper_dir(tmp_path, monkeypatch):
+    """``profiles.list`` scans the alias-wrapper dir (``~/.local/bin``); on a developer machine that
+    can hold symlinks into the real Hermes home (a PM-managed ``node``), which the home I/O guard
+    refuses. An empty temp dir keeps the listing off the host's wrappers."""
+    monkeypatch.setattr("hermes_cli.profiles._get_wrapper_dir", lambda: tmp_path / "wrapper-bin")
+
+
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     """Temp HERMES_HOME with the default profile plus one named profile."""
