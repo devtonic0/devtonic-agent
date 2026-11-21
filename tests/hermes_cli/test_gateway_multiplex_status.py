@@ -15,6 +15,16 @@ import os
 from contextlib import redirect_stdout
 from types import SimpleNamespace
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _isolated_wrapper_dir(tmp_path, monkeypatch):
+    """``list_profiles()`` scans the alias-wrapper dir (``~/.local/bin``); on a developer machine that
+    can hold symlinks into the real Hermes home (a PM-managed ``node``), which the home I/O guard
+    refuses. An empty temp dir keeps the listing off the host's wrappers."""
+    monkeypatch.setattr("hermes_cli.profiles._get_wrapper_dir", lambda: tmp_path / "wrapper-bin")
+
 def _fake_multiplexer(monkeypatch, tmp_path, *, multiplex: bool, pid_file: bool = True):
     """A live default gateway at ``tmp_path`` whose runtime record names this process; the process passes
     the identity check because its command line reads as a gateway's. ``pid_file=False`` models a

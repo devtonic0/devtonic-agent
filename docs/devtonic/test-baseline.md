@@ -304,9 +304,28 @@ green after the change (8 files: 143 passed, 4 skipped):
 | bash 3.2 | `tests/tools/test_terminal_pipeline_status.py` (4 params) | macOS `/bin/bash` 3.2 exits 1 (not 2) on an eval'd syntax error and drops the backslash of a trailing `\` continuation. This is the shell's own behaviour, not the wrapper's | `skipif` bash < 4 on those 4 params only |
 | real-home guard | `tests/tui_gateway/test_profiles_list_{ui_meta_cache,canonical_session,session_field_cache}.py` (6) | `profiles.list` → `build_alias_map()` reads every file in `~/.local/bin`; a symlink there into the real Hermes home (a PM-managed `node`) trips the home I/O guard | Autouse fixture points `_get_wrapper_dir` at an empty temp dir |
 
-Not yet addressed from the macOS classes: the 2 `tests/hermes_cli` real-home
-guard hits, `test_bot_desktop_resources.py` (Xvnc/xfce), and the gateway/CLI
-launchd-vs-systemd service tests.
+Second pass (re-measured `tests/hermes_cli` + `tests/gateway` on macOS with the
+messaging extra, env outside the checkout, `--rerun-failed`). The service and
+real-home leftovers, 4 files / 6 tests, all failing on `main` and green after
+the change (4 files: 28 passed, 10 skipped):
+
+| Class | File | Cause | Change |
+|---|---|---|---|
+| real-home guard | `tests/hermes_cli/test_gateway_multiplex_status.py` (3) | `list_profiles()` → `build_alias_map()` scans `~/.local/bin`, same as the tui_gateway case above | Same autouse `_get_wrapper_dir` fixture |
+| launchd spawn path | `tests/hermes_cli/test_gateway_runtime_ensure.py::test_unmanaged_runtime_drops_session_config_bypass_flags` | Same darwin `start_gateway_job` branch as above; unstubbed, it reached a real `launchctl` and the live-system guard refused it | Stub `start_gateway_job` with the `Popen` capture |
+| launchd plist fixture | `tests/hermes_cli/test_uninstall_full_wipe_sweep.py::test_remove_dashboard_launchd_jobs_boots_out_and_deletes_matching_plists` (darwin-only) | The `LaunchDaemons` fixture ran `["hermes_cli.main", "dashboard"]`; since upstream selects backends by canonical entrypoint + subcommand (#121156), a bare module token is not a Hermes holder, so the job was (correctly) kept | Fixture uses a real launchd shape, `python3 -m hermes_cli.main dashboard` |
+| Linux-only by design | `tests/tools/test_bot_desktop_resources.py::test_start_refuses_and_status_explains_when_memory_is_short` | `runtime.is_supported_host()` is `sys.platform.startswith("linux")`; off Linux `status()` never computes a memory blocker | `@pytest.mark.platforms("linux")` |
+
+The other gateway launchd/systemd service tests listed in the first macOS
+measurement already pass on current `main`.
+
+Still failing on macOS after both passes, none of them service or real-home
+issues: `tests/gateway` 8 (5 need the `acp` extra; 2 in
+`test_session_client_env.py` see the `uv run` venv `bin` prepended to `PATH`
+ahead of the client's; `test_readiness.py` reports `degraded` on the host) and
+`tests/hermes_cli` 80 + 1 error (updater/autostash/recovery-closure and
+source-build/pnpm suites against the host toolchain, `sessions` store-holder
+gates, `test_vault_key_cli.py` without `keyring`).
 
 ## Not yet measured
 

@@ -27,6 +27,8 @@ def test_unmanaged_runtime_drops_session_config_bypass_flags(tmp_path, monkeypat
         captured.update(kwargs)
         return child
     monkeypatch.setattr(start.subprocess, 'Popen', spawn)
+    # macOS hands the same env to a one-off launchd job instead of Popen; capture it there too.
+    monkeypatch.setattr(start, 'start_gateway_job', spawn)
     assert start.spawn_unmanaged_gateway(tmp_path, deadline=time.monotonic() + 5) is child
     assert all(key not in captured['env'] for key in flags)
     assert captured['env']['RUNTIME_TEST_SENTINEL'] == 'retained'
