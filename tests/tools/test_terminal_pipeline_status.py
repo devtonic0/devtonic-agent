@@ -28,6 +28,16 @@ def _run(command: str) -> str:
     return _run_result(command).stdout
 
 
+def _bash_major() -> int:
+    out = subprocess.run(["bash", "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True, check=False)
+    return int(out.stdout.strip() or 0)
+
+
+# bash 3.2 (macOS /bin/bash) reports an eval'd syntax error as 1, not 2, and drops a trailing
+# backslash-newline continuation's backslash: the shell's own semantics, not the wrapper's.
+_needs_bash4 = pytest.mark.skipif(_bash_major() < 4, reason="bash >= 4 syntax-error / line-continuation semantics")
+
+
 def test_pipeline_status_captures_the_leading_command():
     output = _run("false | true")
 
@@ -57,10 +67,10 @@ def _seen(result: subprocess.CompletedProcess) -> tuple[int, str, str]:
         ("set -o pipefail; false | true", 1, ""),
         ("! false", 0, ""),
         ("! true", 1, ""),
-        ("echo 'unbalanced", 2, ""),
-        ('echo "unbalanced', 2, ""),
-        ("echo $(echo unclosed", 2, ""),
-        ("echo hi \\", 0, "hi \\\n"),
+        pytest.param("echo 'unbalanced", 2, "", marks=_needs_bash4),
+        pytest.param('echo "unbalanced', 2, "", marks=_needs_bash4),
+        pytest.param("echo $(echo unclosed", 2, "", marks=_needs_bash4),
+        pytest.param("echo hi \\", 0, "hi \\\n", marks=_needs_bash4),
         ("cat <<'EOF'\nunterminated heredoc", 0, "unterminated heredoc\n"),
         ("exit 3", 3, ""),
         ("trap 'echo T' ERR; false", 1, "T\n"),

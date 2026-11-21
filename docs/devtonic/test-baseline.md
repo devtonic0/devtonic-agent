@@ -291,6 +291,23 @@ real-home guard on a host `node`, `/var` → `/private/var`), plus
 running against the host's nvm Node. `test_update_recovery_closure.py` passes on
 Linux in upstream's env.
 
+### macOS-only failures fixed in the fork
+
+Test-only changes, each reproduced alone on macOS 15.5 (bash 3.2.57) and
+green after the change (8 files: 143 passed, 4 skipped):
+
+| Class | File | Cause | Change |
+|---|---|---|---|
+| `/var` → `/private/var` | `tests/agent/test_compaction_prompt_rebuild.py` (3) | The workspace pin key and the `- Root:` line use the resolved cwd; the tests compared against the unresolved `mkdtemp()` path | Resolve the temp root once |
+| `/var` → `/private/var` | `tests/tools/test_delegate.py::test_child_dedicated_db_follows_parents_db_path` | The child reopens the profile db by its real path | Resolve the `TemporaryDirectory()` root |
+| launchd spawn path | `tests/gateway/test_session_client_env.py::test_auto_started_gateway_does_not_inherit_client_behaviour_env` | On darwin `spawn_unmanaged_gateway` hands the env to `start_gateway_job` (one-off launchd job), not `Popen`, so the stub captured nothing (`KeyError: 'env'`) | Stub `start_gateway_job` with the same capture |
+| bash 3.2 | `tests/tools/test_terminal_pipeline_status.py` (4 params) | macOS `/bin/bash` 3.2 exits 1 (not 2) on an eval'd syntax error and drops the backslash of a trailing `\` continuation. This is the shell's own behaviour, not the wrapper's | `skipif` bash < 4 on those 4 params only |
+| real-home guard | `tests/tui_gateway/test_profiles_list_{ui_meta_cache,canonical_session,session_field_cache}.py` (6) | `profiles.list` → `build_alias_map()` reads every file in `~/.local/bin`; a symlink there into the real Hermes home (a PM-managed `node`) trips the home I/O guard | Autouse fixture points `_get_wrapper_dir` at an empty temp dir |
+
+Not yet addressed from the macOS classes: the 2 `tests/hermes_cli` real-home
+guard hits, `test_bot_desktop_resources.py` (Xvnc/xfce), and the gateway/CLI
+launchd-vs-systemd service tests.
+
 ## Not yet measured
 
 `tests/e2e`, `tests/integration`, `tests/pm`, `tests/plugins`.

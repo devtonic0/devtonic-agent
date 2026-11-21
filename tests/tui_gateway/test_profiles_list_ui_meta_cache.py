@@ -17,6 +17,14 @@ import pytest
 import tui_gateway.server as srv
 from tui_gateway import profile_roster_cache as cache
 
+
+@pytest.fixture(autouse=True)
+def _isolated_wrapper_dir(tmp_path, monkeypatch):
+    """``profiles.list`` scans the alias-wrapper dir (``~/.local/bin``); on a developer machine that
+    can hold symlinks into the real Hermes home (a PM-managed ``node``), which the home I/O guard
+    refuses. An empty temp dir keeps the listing off the host's wrappers."""
+    monkeypatch.setattr("hermes_cli.profiles._get_wrapper_dir", lambda: tmp_path / "wrapper-bin")
+
 @pytest.fixture(autouse=True)
 def _clear_memo():
     cache.invalidate()
