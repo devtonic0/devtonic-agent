@@ -319,10 +319,16 @@ the change (4 files: 28 passed, 10 skipped):
 The other gateway launchd/systemd service tests listed in the first macOS
 measurement already pass on current `main`.
 
-Still failing on macOS after both passes, none of them service or real-home
-issues: `tests/gateway` 8 (5 need the `acp` extra; 2 in
-`test_session_client_env.py` see the `uv run` venv `bin` prepended to `PATH`
-ahead of the client's; `test_readiness.py` reports `degraded` on the host) and
+Third pass, host-dependent gateway tests (both files: 3 failing on `main`,
+16 passed after the change):
+
+| Class | File | Cause | Change |
+|---|---|---|---|
+| launcher-dependent `PATH` | `tests/gateway/test_session_client_env.py` (2) | `_make_run_env` prepends the dir holding the `hermes` shim when it is missing from `PATH`; under `uv run` that is the checkout's `.venv/bin` (`sys.executable`'s dir), so it lands ahead of the client's `/client/bin` and `PATH.split(':')[0]` depends on how pytest was launched | Autouse fixture sets the cached `_HERMES_BIN_DIR` to `None` |
+| host disk usage | `tests/gateway/test_readiness.py::test_collect_runtime_readiness_reports_healthy_local_runtime` | The overall status folds in the disk probe, which reports `degraded` at ≥ 90% used; APFS reports the shared container's usage (94% on the measuring host) | Stub `shutil.disk_usage` at 50% in the healthy-runtime test |
+
+Still failing on macOS after these passes, none of them service or real-home
+issues: `tests/gateway` 5 (need the `acp` extra) and
 `tests/hermes_cli` 80 + 1 error (updater/autostash/recovery-closure and
 source-build/pnpm suites against the host toolchain, `sessions` store-holder
 gates, `test_vault_key_cli.py` without `keyring`).

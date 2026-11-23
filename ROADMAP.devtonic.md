@@ -15,7 +15,10 @@ The autonomous improvement loop works these items top-down. When an item lands, 
     - [ ] Offer both test fixes upstream (NousResearch/hermes-agent); the sqlite3 one applies to `persistence.sqlite.admin._lost_and_found` there
   - [x] Fix or mark the macOS-only failures in the large set (`/private/var` path compares, bash 3.2 pipeline status, real-home guard on host tools) ([#11](https://github.com/devtonic0/devtonic-agent/pull/11))
     - [x] Remaining macOS-only: 2 `tests/hermes_cli` real-home guard hits, Xvnc/xfce desktop test, launchd-vs-systemd service tests (mark `platforms("linux")` where Linux-only by design) ([#12](https://github.com/devtonic0/devtonic-agent/pull/12))
-    - [ ] macOS leftovers outside those classes: `uv run` venv `bin` on `PATH` in `test_session_client_env.py` (2), `test_readiness.py` degraded on host, `sessions` store-holder gates and updater/source-build suites in `tests/hermes_cli`
+    - [ ] macOS leftovers outside those classes
+      - [x] `uv run` venv `bin` on `PATH` in `test_session_client_env.py` (2), `test_readiness.py` degraded on a >90%-full host disk ([#13](https://github.com/devtonic0/devtonic-agent/pull/13))
+      - [ ] `sessions` store-holder gates in `tests/hermes_cli`
+      - [ ] updater/autostash/recovery-closure and source-build/pnpm suites in `tests/hermes_cli` against the host toolchain
   - [ ] Triage the `tests/hermes_state` `messages_fts` malformed-schema failures on macOS / SQLite 3.53
 - [ ] Expand Devtonic CI coverage step by step (core agent loop, tools, cron, cli) while keeping it under 15 minutes on `ubuntu-latest` (default baseline set already runs in CI, ~3 min, [#2](https://github.com/devtonic0/devtonic-agent/pull/2))
 - [ ] Add a `scripts/devtonic/sync-upstream.sh` helper plus docs: merge upstream/main, run the baseline, open a PR
