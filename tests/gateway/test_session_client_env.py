@@ -8,6 +8,18 @@ from types import SimpleNamespace
 
 import pytest
 
+
+@pytest.fixture(autouse=True)
+def _no_hermes_bin_dir(monkeypatch):
+    """These tests pin whose PATH a session's tools see (client vs daemon). The terminal env also
+    prepends the directory holding the ``hermes`` shim when it is missing; under ``uv run`` that is
+    the checkout's ``.venv/bin`` (``sys.executable``'s dir), which lands ahead of the client's entry
+    and makes ``PATH.split(':')[0]`` depend on how pytest was launched."""
+    from tools.environments import local
+    monkeypatch.setattr(local, '_HERMES_BIN_DIR', None)
+    monkeypatch.setattr(local, '_HERMES_BIN_DIR_IS_PAYLOAD', False)
+
+
 _CONFIG = 'platform_toolsets: {cli: []}\nmodel: {provider: custom, default: m, base_url: http://x.invalid/v1}\n'
 
 

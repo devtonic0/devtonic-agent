@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 from pathlib import Path
 
@@ -18,6 +19,13 @@ def test_collect_runtime_readiness_reports_healthy_local_runtime(tmp_path, monke
     with sqlite3.connect(home / "state.db") as conn:
         conn.execute("CREATE TABLE probe (id INTEGER PRIMARY KEY)")
     monkeypatch.setenv("HERMES_HOME", str(home))
+    # The overall status folds in the disk probe; a host disk past the degraded
+    # threshold (common on dev laptops: APFS reports the shared container) would
+    # make "healthy" depend on the machine, so pin a half-full disk.
+    monkeypatch.setattr(
+        "gateway.readiness.shutil.disk_usage",
+        lambda _path: shutil._ntuple_diskusage(total=100, used=50, free=50),
+    )
 
     result = collect_runtime_readiness(
         configured_model="test/model",
