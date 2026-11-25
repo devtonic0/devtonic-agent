@@ -327,11 +327,19 @@ Third pass, host-dependent gateway tests (both files: 3 failing on `main`,
 | launcher-dependent `PATH` | `tests/gateway/test_session_client_env.py` (2) | `_make_run_env` prepends the dir holding the `hermes` shim when it is missing from `PATH`; under `uv run` that is the checkout's `.venv/bin` (`sys.executable`'s dir), so it lands ahead of the client's `/client/bin` and `PATH.split(':')[0]` depends on how pytest was launched | Autouse fixture sets the cached `_HERMES_BIN_DIR` to `None` |
 | host disk usage | `tests/gateway/test_readiness.py::test_collect_runtime_readiness_reports_healthy_local_runtime` | The overall status folds in the disk probe, which reports `degraded` at ≥ 90% used; APFS reports the shared container's usage (94% on the measuring host) | Stub `shutil.disk_usage` at 50% in the healthy-runtime test |
 
+Fourth pass, `sessions` store-holder gates (4 files, 11 failing on `main`; the
+holder-related `tests/hermes_cli` files plus `tests/devtonic`: 144 passed,
+3 skipped after the change):
+
+| Class | File | Cause | Change |
+|---|---|---|---|
+| real-home guard | `tests/hermes_cli/test_sessions_{held_store_gate,failure_exit_codes,set_journal_mode,delete}.py` (11) | On macOS `foreign_state_db_holders` walks `psutil` `open_files()`, which `stat`s every path each process holds, then `realpath()`s each one. With a live gateway on the host those include `~/.hermes/logs/gateway.log` and `state.db`, so the home-I/O guard raised inside the scan; the scan reported `open-file scan failed` (fail-closed) and every rewrite was refused, even after the test's holder exited | `tests/home_io_guard.py` runs the scan as descriptor inspection, like its existing `/proc/<pid>/fd` exemption; ordinary reads under the real home are still refused (`tests/devtonic/test_state_db_holder_scan.py`) |
+
 Still failing on macOS after these passes, none of them service or real-home
 issues: `tests/gateway` 5 (need the `acp` extra) and
-`tests/hermes_cli` 80 + 1 error (updater/autostash/recovery-closure and
-source-build/pnpm suites against the host toolchain, `sessions` store-holder
-gates, `test_vault_key_cli.py` without `keyring`).
+`tests/hermes_cli` ~70 + 1 error (updater/autostash/recovery-closure and
+source-build/pnpm suites against the host toolchain, `test_vault_key_cli.py`
+without `keyring`).
 
 ## Not yet measured
 

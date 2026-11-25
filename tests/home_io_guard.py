@@ -228,3 +228,27 @@ class HomeIOGuard:
 
         monkeypatch.setattr(os, "open", guarded_open)
         monkeypatch.setattr(os, "close", guarded_close)
+        self._exempt_state_db_holder_scan(monkeypatch)
+
+    def _exempt_state_db_holder_scan(self, monkeypatch):
+        """The state.db holder scan inspects OTHER processes' descriptors: psutil's macOS/BSD
+        ``open_files()`` stats every path the kernel reports, and the scan ``realpath()``s
+        each one to compare it with the watched store. On a developer host whose live gateway
+        holds files under the real home that touches them read-only, the same descriptor
+        inspection the ``/proc/<pid>/fd`` exemption in ``check()`` allows; refusing it turned
+        every scan into "open-file scan failed" and every held-store gate into a refusal."""
+        import hermes_state_holders
+
+        original = hermes_state_holders.foreign_state_db_holders
+        checking = self.checking
+
+        @wraps(original)
+        def descriptor_scan(db_path):
+            previous = getattr(checking, "active", False)
+            checking.active = True
+            try:
+                return original(db_path)
+            finally:
+                checking.active = previous
+
+        monkeypatch.setattr(hermes_state_holders, "foreign_state_db_holders", descriptor_scan)
