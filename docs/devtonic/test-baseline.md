@@ -335,11 +335,26 @@ holder-related `tests/hermes_cli` files plus `tests/devtonic`: 144 passed,
 |---|---|---|---|
 | real-home guard | `tests/hermes_cli/test_sessions_{held_store_gate,failure_exit_codes,set_journal_mode,delete}.py` (11) | On macOS `foreign_state_db_holders` walks `psutil` `open_files()`, which `stat`s every path each process holds, then `realpath()`s each one. With a live gateway on the host those include `~/.hermes/logs/gateway.log` and `state.db`, so the home-I/O guard raised inside the scan; the scan reported `open-file scan failed` (fail-closed) and every rewrite was refused, even after the test's holder exited | `tests/home_io_guard.py` runs the scan as descriptor inspection, like its existing `/proc/<pid>/fd` exemption; ordinary reads under the real home are still refused (`tests/devtonic/test_state_db_holder_scan.py`) |
 
+Fifth pass, updater and TUI-node fixtures (2 files, 9 failing on `main`; the
+updater/recovery/autostash/TUI files: 69 passed, 1 skipped after the change):
+
+| Class | File | Cause | Change |
+|---|---|---|---|
+| macOS custody runner | `tests/hermes_cli/test_update_autostash.py` (8) | The fixture faults the hard reset by patching `subprocess.run`. With no parent-death signal (macOS), `update_custody.run_git` runs updater git under the lock through `_run_owner_watched` (`Popen`), so the fault never fired: no reset was recorded and the injected reset failure never raised | Route `_run_owner_watched` through the same fault |
+| real-home guard | `tests/hermes_cli/test_tui_npm_install.py::test_runtime_node_comes_from_pm_without_legacy_repair` | The fake PM `node` was a symlink to the host's `node`; where that is a link into the real Hermes home, `shutil.which` stats through it and trips the guard | A stub executable in `tmp_path` |
+
+`test_update_recovery_closure.py` passes on macOS on current `main` (14 passed).
+
 Still failing on macOS after these passes, none of them service or real-home
-issues: `tests/gateway` 5 (need the `acp` extra) and
-`tests/hermes_cli` ~70 + 1 error (updater/autostash/recovery-closure and
-source-build/pnpm suites against the host toolchain, `test_vault_key_cli.py`
-without `keyring`).
+issues: `tests/gateway` 5 (need the `acp` extra), `test_vault_key_cli.py`
+without `keyring`, and, in a re-measure of `tests/hermes_cli -k "update or
+source_build or tui or web_ui or desktop"` (2800 passed, 35 failed, 187
+skipped; the source-build/pnpm files now pass), 8 files:
+`test_update_target_identity.py` (11), `test_update_fleet_restart_pending.py`
+(7), `test_gateway_launch_lifetime.py` (5), `test_tui_worktree_clean_quit.py`
+(5), `test_tui_worktree_resume_recreate.py` (2),
+`test_update_interrupted_pull.py` (2), `test_desktop_update_verify.py` (2),
+`test_desktop_swap_file_lock_retry.py` (1).
 
 ## Not yet measured
 
