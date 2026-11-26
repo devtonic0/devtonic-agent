@@ -133,10 +133,12 @@ def test_runtime_node_comes_from_pm_without_legacy_repair(tmp_path, monkeypatch)
     import pm
     from pm.package import Runner
 
-    node = shutil.which("node")
+    # A stub executable, not a symlink to the host's node: that is often a link into the
+    # real Hermes home (a PM-managed node in ~/.local/bin), which the home-I/O guard refuses.
     managed = tmp_path / "bin/node"
     managed.parent.mkdir()
-    managed.symlink_to(node)
+    managed.write_text("#!/bin/sh\n", encoding="utf-8")
+    managed.chmod(0o755)
     monkeypatch.delenv("HERMES_NODE", raising=False)
     acquired = []
 

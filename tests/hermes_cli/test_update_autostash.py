@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import pytest
 
-from hermes_cli import main as hermes_main, update_cmd
+from hermes_cli import main as hermes_main, update_cmd, update_custody
 from tests.hermes_cli.test_update_target_identity import git, update_tree
 from datetime import UTC
 
@@ -50,6 +50,10 @@ def test_update_preserves_local_work_and_rescues_orphan_before_reset(
         return original(command, *args, **kwargs)
 
     monkeypatch.setattr(subprocess, 'run', fault)
+    # Without a parent-death signal (macOS) updater git under custody goes through
+    # Popen in _run_owner_watched, not subprocess.run; route it through the fault too.
+    monkeypatch.setattr(update_custody, '_run_owner_watched',
+                        lambda argv, kwargs, watch_owner=True: fault(list(argv), **kwargs))
     if failure == 'head':
         monkeypatch.setattr(update_cmd, '_capture_head_sha', lambda *_: None)
     if failure == 'reset':
