@@ -43,11 +43,21 @@ def bootstrap(start: bool, recover: bool = False) -> dict:
         raise ImportError(f"dependency environment unavailable: {exc}") from exc
     from hermes_constants import get_hermes_home
     from hermes_cli.gateway_client import gateway_ws_target
-    from hermes_cli.gateway_runtime_attach import attach_gateway, failure_message, scrub_client_launch_env
+    from hermes_cli.gateway_runtime import GatewayDiscovery
+    from hermes_cli.gateway_runtime_attach import (GatewayAttach, TicketUnavailable, attach_gateway,
+                                                   failure_message, scrub_client_launch_env)
 
     scrub_client_launch_env()
-    # The same attach `hermes gateway attach` runs; Ink keeps its own 30 s start budget.
-    attached = attach_gateway(get_hermes_home().resolve(), start=start, recover=recover, timeout=30)
+    # The same attach `hermes gateway attach` runs; Ink keeps its own 30 s start budget. The home goes in
+    # as the environment names it: attach asks whether a plugin runs the profile elsewhere before it
+    # resolves the path, and resolving a link can lead out of the Hermes root, past its marker.
+    try:
+        attached = attach_gateway(get_hermes_home(), start=start, recover=recover, timeout=30)
+    except TicketUnavailable as exc:
+        # Attachable, then no ticket: the verdict `hermes gateway attach` reports. Ink echoes only its
+        # `gateway inaccessible:` lines inline, the refusal's repair command among them.
+        attached = GatewayAttach(GatewayDiscovery("inaccessible", reason_code="ticket_unavailable",
+                                                  detail=exc.detail or exc.reason))
     if attached.ticket is None:
         raise RuntimeError(failure_message(attached.receipt))
     endpoint = attached.receipt.endpoint
